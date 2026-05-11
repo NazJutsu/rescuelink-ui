@@ -11,6 +11,7 @@ import {
   Animated,
   Dimensions,
   Keyboard,
+  Modal,
   PanResponder,
   Platform,
   Pressable,
@@ -35,7 +36,6 @@ import {
   MAP_CENTER,
   nearbyOperators,
 } from "../../mock/customerSeed";
-import type { OperatorPin } from "../../mock/types";
 import {
   seedNotifications,
   unreadNotificationsCount,
@@ -64,7 +64,6 @@ import {
   type OpenMeteoCurrent,
   type WeatherIconKind,
 } from "../../services/openMeteo";
-import { fetchOsrmDrivingRoute } from "../../services/osrmRouting";
 import { greetingSalutation } from "../../utils/greeting";
 
 function weatherIonicon(kind: WeatherIconKind): keyof typeof Ionicons.glyphMap {
@@ -92,22 +91,6 @@ function weatherIonicon(kind: WeatherIconKind): keyof typeof Ionicons.glyphMap {
 
 const HOME_NOTIFICATION_BADGE_COUNT = unreadNotificationsCount(seedNotifications);
 
-type RankedNearbyOperator = OperatorPin & {
-  straightMiles: number;
-  etaMinutesFromDistance: number;
-};
-
-type OperatorPickupRouteLegState = {
-  operatorId: string;
-  operatorName: string;
-  coordinates: LatLng[];
-  distanceMiles: number;
-  durationMinutes: number;
-  straightLineFallback: boolean;
-};
-
-const OPERATOR_TAP_DOUBLE_MS = 260;
-
 function photonFeatureKey(f: PhotonFeature, index: number): string {
   const p = f.properties;
   const id = p.osm_id;
@@ -120,8 +103,12 @@ function photonFeatureKey(f: PhotonFeature, index: number): string {
 export function HomeMapScreen() {
   const insets = useSafeAreaInsets();
   const window = Dimensions.get("window");
-  const expandedSheet = window.height * 0.72;
   const collapsedSheet = 118 + insets.bottom;
+  /** Fully-open sheet capped at ~38% of viewport height (cannot drag higher). */
+  const expandedSheet = Math.max(
+    collapsedSheet + 8,
+    Math.round(window.height * 0.38),
+  );
   const collapsedOffset = Math.max(0, expandedSheet - collapsedSheet);
 
   const mapRef = useRef<MapView>(null);
@@ -157,16 +144,7 @@ export function HomeMapScreen() {
   const blurClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [weatherSnap, setWeatherSnap] = useState<OpenMeteoCurrent | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
-  const [focusedOperatorId, setFocusedOperatorId] = useState<string | null>(null);
-  const operatorTapPendingRef = useRef<{
-    operatorId: string;
-    timer: ReturnType<typeof setTimeout>;
-  } | null>(null);
-  const operatorRouteAbortRef = useRef<AbortController | null>(null);
-  const [operatorPickupRouteLeg, setOperatorPickupRouteLeg] =
-    useState<OperatorPickupRouteLegState | null>(null);
-  const [operatorPickupRouteLoading, setOperatorPickupRouteLoading] =
-    useState(false);
+  const [recoveryLayerVisible, setRecoveryLayerVisible] = useState(false);
 
   const wxLat = pickupCoords?.latitude ?? MAP_CENTER.latitude;
   const wxLon = pickupCoords?.longitude ?? MAP_CENTER.longitude;
@@ -180,7 +158,7 @@ export function HomeMapScreen() {
     if (pick && pickupCoords != null)
       return "Pickup pinned — check the map, then tap Request recovery when ready.";
     if (pick) return "Refine pickup or locate yourself, then send your request.";
-    return "On-demand recovery nearby — start with where you're stuck.";
+    return "Recovery coverage is shown on the map — you'll see who picks you up once someone accepts.";
   }, [pickup, pickupCoords]);
 
   const cancelSuggestionBlurClear = useCallback(() => {
@@ -279,16 +257,6 @@ export function HomeMapScreen() {
       ac.abort();
     };
   }, [activeAddressField, pickup, dropoff]);
-
-  useEffect(
-    () => () => {
-      const p = operatorTapPendingRef.current;
-      if (p) clearTimeout(p.timer);
-      operatorTapPendingRef.current = null;
-      operatorRouteAbortRef.current?.abort();
-    },
-    [],
-  );
 
   useEffect(() => {
     const ac = new AbortController();
@@ -438,7 +406,12 @@ export function HomeMapScreen() {
     }
   }, []);
 
-  const requestRecovery = useCallback(() => {
+  const closeRecoveryLayer = useCallback(() => {
+    setRecoveryLayerVisible(false);
+  }, []);
+
+  const confirmRecoveryBooking = useCallback(() => {
+    setRecoveryLayerVisible(false);
     rootNav?.navigate("BookingFlow", {
       pickupLabel: pickup.trim() || undefined,
       dropoffLabel: dropoff.trim() || undefined,
@@ -459,30 +432,6 @@ export function HomeMapScreen() {
     [pickupCoords],
   );
 
-  useEffect(() => {
-    operatorRouteAbortRef.current?.abort();
-    setOperatorPickupRouteLeg(null);
-    setOperatorPickupRouteLoading(false);
-  }, [previewPin]);
-
-  const operatorsRanked = useMemo((): RankedNearbyOperator[] => {
-    const anchor = previewPin;
-    return [...nearbyOperators]
-      .map((op) => {
-        const straightMiles = haversineMiles(anchor, {
-          latitude: op.latitude,
-          longitude: op.longitude,
-        });
-        const { minutes } = estimateRoadMilesAndMinutes(straightMiles);
-        return {
-          ...op,
-          straightMiles,
-          etaMinutesFromDistance: minutes,
-        };
-      })
-      .sort((a, b) => a.straightMiles - b.straightMiles);
-  }, [previewPin]);
-
   const collapseSheetForMapPreview = useCallback(() => {
     Animated.spring(translateY, {
       toValue: collapsedOffset,
@@ -492,124 +441,14 @@ export function HomeMapScreen() {
     }).start();
   }, [collapsedOffset, translateY]);
 
-  const focusOperatorOnMap = useCallback((op: OperatorPin) => {
+  const openRecoveryLayer = useCallback(() => {
     Keyboard.dismiss();
-    setFocusedOperatorId(op.id);
-    mapRef.current?.animateToRegion(
-      {
-        latitude: op.latitude,
-        longitude: op.longitude,
-        latitudeDelta: 0.015,
-        longitudeDelta: 0.015,
-      },
-      380,
-    );
-  }, []);
-
-  const requestOperatorPickupRouteFromOp = useCallback(
-    async (op: OperatorPin) => {
-      Keyboard.dismiss();
-      collapseSheetForMapPreview();
-      operatorRouteAbortRef.current?.abort();
-      const ac = new AbortController();
-      operatorRouteAbortRef.current = ac;
-      setFocusedOperatorId(op.id);
-      setOperatorPickupRouteLoading(true);
-      setOperatorPickupRouteLeg(null);
-
-      const operatorCoord: LatLng = {
-        latitude: op.latitude,
-        longitude: op.longitude,
-      };
-
-      try {
-        const summary = await fetchOsrmDrivingRoute(
-          operatorCoord,
-          previewPin,
-          ac.signal,
-        );
-
-        const tripMiles = summary.distanceMeters * 0.000621371;
-        const minsRounded = Math.max(
-          1,
-          Math.round(summary.durationSeconds / 60),
-        );
-
-        setOperatorPickupRouteLeg({
-          operatorId: op.id,
-          operatorName: op.name,
-          coordinates: summary.coordinates,
-          distanceMiles: tripMiles,
-          durationMinutes: minsRounded,
-          straightLineFallback: false,
-        });
-      } catch (e: unknown) {
-        const aborted = e instanceof Error && e.name === "AbortError";
-        if (aborted || ac.signal.aborted) return;
-
-        const straightMi = haversineMiles(operatorCoord, previewPin);
-        const { roadMiles, minutes } = estimateRoadMilesAndMinutes(straightMi);
-
-        setOperatorPickupRouteLeg({
-          operatorId: op.id,
-          operatorName: op.name,
-          coordinates: [operatorCoord, previewPin],
-          distanceMiles: roadMiles,
-          durationMinutes: minutes,
-          straightLineFallback: true,
-        });
-
-        Alert.alert(
-          "Road routing unavailable",
-          "Showing a straight-line preview instead — OSRM’s public demo may be busy or offline.",
-        );
-      } finally {
-        if (!ac.signal.aborted) setOperatorPickupRouteLoading(false);
-      }
-    },
-    [collapseSheetForMapPreview, previewPin],
-  );
-
-  const handleOperatorTap = useCallback(
-    (op: OperatorPin) => {
-      const p = operatorTapPendingRef.current;
-      if (p?.operatorId === op.id) {
-        clearTimeout(p.timer);
-        operatorTapPendingRef.current = null;
-        void requestOperatorPickupRouteFromOp(op);
-        return;
-      }
-      if (p) clearTimeout(p.timer);
-      operatorTapPendingRef.current = {
-        operatorId: op.id,
-        timer: setTimeout(() => {
-          operatorTapPendingRef.current = null;
-          focusOperatorOnMap(op);
-        }, OPERATOR_TAP_DOUBLE_MS),
-      };
-    },
-    [focusOperatorOnMap, requestOperatorPickupRouteFromOp],
-  );
-
-  useEffect(() => {
-    const coords = operatorPickupRouteLeg?.coordinates;
-    if (!coords?.length) return;
-
-    const bottomPad = collapsedSheet + 70;
-    mapRef.current?.fitToCoordinates(coords, {
-      edgePadding: {
-        top: insets.top + 150,
-        right: 32,
-        bottom: bottomPad,
-        left: 32,
-      },
-      animated: true,
-    });
-  }, [collapsedSheet, insets.top, operatorPickupRouteLeg]);
+    collapseSheetForMapPreview();
+    setRecoveryLayerVisible(true);
+  }, [collapseSheetForMapPreview]);
 
   const showRouteChip = pickup.trim().length > 0 && dropoff.trim().length > 0;
   const CHIP_BASE_TOP = insets.top + 136;
-  const operatorAssistChipTop = CHIP_BASE_TOP + (showRouteChip ? 102 : 0);
 
   return (
     <View style={styles.flex}>
@@ -644,30 +483,18 @@ export function HomeMapScreen() {
             />
           </>
         )}
-        {operatorsRanked.map((op) => (
-          <Marker
-            key={op.id}
-            coordinate={{ latitude: op.latitude, longitude: op.longitude }}
-            title={op.name}
-            description={`Tap twice for route to pickup · ~${op.straightMiles.toFixed(1)} mi`}
-            pinColor={focusedOperatorId === op.id ? "#a3e635" : colors.orange}
-            onPress={() => handleOperatorTap(op)}
-          />
-        ))}
-        {operatorPickupRouteLeg?.coordinates?.length ? (
-          <Polyline
-            coordinates={operatorPickupRouteLeg.coordinates}
-            strokeColor="#38bdf8"
-            strokeWidth={4}
-            lineDashPattern={
-              operatorPickupRouteLeg.straightLineFallback
-                ? [10, 6]
-                : Platform.OS === "ios"
-                  ? [14, 10]
-                  : undefined
-            }
-          />
-        ) : null}
+        {!routeEndpoints
+          ? nearbyOperators.map((op) => (
+              <Marker
+                key={op.id}
+                coordinate={{ latitude: op.latitude, longitude: op.longitude }}
+                tracksViewChanges={false}
+                title="Recovery coverage"
+                description="You’ll see who responds after you send a request."
+                pinColor={colors.orange}
+              />
+            ))
+          : null}
       </MapView>
 
       {showRouteChip ? (
@@ -692,36 +519,6 @@ export function HomeMapScreen() {
                 <Text style={styles.routeChipSub}>
                   Estimated driving distance & time (not turn-by-turn) · addresses via Photon /
                   OSM
-                </Text>
-              </>
-            ) : null}
-          </View>
-        </View>
-      ) : null}
-
-      {operatorPickupRouteLoading || operatorPickupRouteLeg ? (
-        <View
-          pointerEvents="box-none"
-          style={[styles.routeChipWrap, { top: operatorAssistChipTop }]}
-        >
-          <View style={[styles.routeChip, styles.operatorRouteAssistChip]}>
-            {operatorPickupRouteLoading ? (
-              <View style={styles.routeChipRow}>
-                <ActivityIndicator color="#38bdf8" size="small" />
-                <Text style={[styles.routeChipMain, styles.operatorRouteAssistTitle]}>
-                  Plotting route toward you…
-                </Text>
-              </View>
-            ) : operatorPickupRouteLeg ? (
-              <>
-                <Text style={[styles.routeChipMain, styles.operatorRouteAssistTitle]} numberOfLines={2}>
-                  {operatorPickupRouteLeg.operatorName}: ~{operatorPickupRouteLeg.distanceMiles.toFixed(1)}{" "}
-                  mi · ~{operatorPickupRouteLeg.durationMinutes} min
-                </Text>
-                <Text style={styles.routeChipSub}>
-                  {operatorPickupRouteLeg.straightLineFallback
-                    ? "Straight-line estimate — routing service unavailable."
-                    : "Driving route preview to your pickup pin (OpenStreetMap / OSRM demo — not assignment)."}
                 </Text>
               </>
             ) : null}
@@ -970,74 +767,114 @@ export function HomeMapScreen() {
             </View>
           ) : null}
 
-          <View style={styles.opSectionHead}>
-            <Text style={[styles.label, styles.labelPlain]}>Nearby operators</Text>
-            <Text style={styles.opExplain} numberOfLines={3}>
-              Sorted by miles from pickup{pickupCoords ? "" : " (map preview)"}. Tap a card once to zoom the map — double‑tap quickly to collapse the sheet, plot driving route toward you, and focus the map.
-            </Text>
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.strip}
-          >
-            {operatorsRanked.map((item) => {
-              const isFocused = focusedOperatorId === item.id;
-              return (
-                <Pressable
-                  key={item.id}
-                  accessibilityRole="button"
-                  accessibilityHint="Tap once to zoom the map on this operator — double‑tap slides the sheet down and plots their route toward your pickup"
-                  accessibilityLabel={`${item.name}, ${item.straightMiles.toFixed(1)} miles, about ${item.etaMinutesFromDistance} minutes`}
-                  onPress={() => handleOperatorTap(item)}
-                  style={({ pressed }) => [
-                    styles.opCard,
-                    isFocused && styles.opCardFocused,
-                    pressed && styles.opCardPressed,
-                  ]}
-                >
-                  <View style={styles.opAvatar}>
-                    <Text style={styles.opAvatarText}>{item.avatarInitials}</Text>
-                  </View>
-                  <Text style={styles.opName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  <Text style={styles.opDistanceEta} numberOfLines={2}>
-                    ~{item.straightMiles.toFixed(1)} mi · ~{item.etaMinutesFromDistance} min
-                  </Text>
-                  <View style={styles.opGearRow}>
-                    {item.flatbed ? (
-                      <View style={styles.opChip}>
-                        <Ionicons name="car-sport-outline" size={11} color={colors.orange} />
-                        <Text style={styles.opChipLabel}>Flatbed</Text>
-                      </View>
-                    ) : null}
-                    {item.winch ? (
-                      <View style={styles.opChip}>
-                        <Ionicons name="link-outline" size={11} color={colors.orange} />
-                        <Text style={styles.opChipLabel}>Winch</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                  <Text style={styles.opRating}>★ {item.rating.toFixed(1)}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-
           <RLButton
             label="Request recovery"
-            onPress={requestRecovery}
+            onPress={openRecoveryLayer}
             disabled={!pickup.trim()}
             style={{ marginTop: space.md }}
           />
           <Text style={styles.geoAttribution}>
             Address search: Photon (Komoot, free tier) & OpenStreetMap — falls back to your
-            device geocoder if needed. Weather via Open‑Meteo (free API). Operator driving preview:
-            OSRM public demo routing (coordinates only · not turn-by-turn nav).
+            device geocoder if needed. Weather via Open‑Meteo (free API). Tow-distance hint uses a
+            straight-line estimate between addresses — not live dispatch.
           </Text>
         </ScrollView>
       </Animated.View>
+
+      <Modal
+        visible={recoveryLayerVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={closeRecoveryLayer}
+        statusBarTranslucent
+      >
+        <View style={styles.recoveryLayerRoot}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss request summary"
+            style={styles.recoveryLayerBackdropPress}
+            onPress={closeRecoveryLayer}
+          >
+            <BlurView
+              intensity={Platform.OS === "ios" ? 48 : 36}
+              tint="dark"
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View style={styles.recoveryLayerDim} pointerEvents="none" />
+          </Pressable>
+          <View style={styles.recoveryLayerForeground} pointerEvents="box-none">
+            <View
+              style={[
+                styles.recoveryLayerSheet,
+                { maxHeight: window.height * 0.88, paddingBottom: insets.bottom + space.md },
+              ]}
+            >
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                style={[styles.recoveryLayerScroll, { maxHeight: window.height * 0.52 }]}
+              >
+                <Text style={styles.recoveryLayerTitle}>Request recovery</Text>
+                <Text style={styles.recoveryLayerLead}>
+                  Confirm your pickup before continuing — vehicle details & quotes come next.
+                </Text>
+
+                <View style={styles.recoveryKv}>
+                  <Text style={styles.recoveryK}>Pickup</Text>
+                  <Text style={styles.recoveryV} selectable>
+                    {pickup.trim()}
+                  </Text>
+                </View>
+                <View style={styles.recoveryKv}>
+                  <Text style={styles.recoveryK}>Drop-off</Text>
+                  <Text style={styles.recoveryV} selectable>
+                    {dropoff.trim().length > 0 ? dropoff.trim() : "Not set — add anytime"}
+                  </Text>
+                </View>
+
+                {pickup.trim().length > 0 &&
+                dropoff.trim().length > 0 &&
+                routeEstimate ? (
+                  <View style={styles.recoveryInsight}>
+                    <Ionicons name="navigate-outline" size={16} color={colors.orange} />
+                    <Text style={styles.recoveryInsightText}>
+                      Tow leg ~{routeEstimate.roadMiles.toFixed(1)} mi · ~{routeEstimate.minutes}{" "}
+                      min (straight-line estimate — not turn-by-turn).
+                    </Text>
+                  </View>
+                ) : pickup.trim().length > 0 &&
+                  dropoff.trim().length > 0 &&
+                  routeLoading ? (
+                  <View style={styles.recoveryInsight}>
+                    <ActivityIndicator color={colors.orange} size="small" />
+                    <Text style={styles.recoveryInsightText}>Working out tow distance…</Text>
+                  </View>
+                ) : null}
+
+                <View style={[styles.recoveryInsight, { marginBottom: space.sm }]}>
+                  <Ionicons name="map-outline" size={16} color="#38bdf8" />
+                  <Text style={styles.recoveryInsightText}>
+                    Pins on the map are coverage only — you’ll find out who’s coming after someone
+                    accepts your request.
+                  </Text>
+                </View>
+              </ScrollView>
+
+              <RLButton
+                label="Continue to book"
+                onPress={confirmRecoveryBooking}
+                style={{ marginTop: space.md }}
+              />
+              <RLButton
+                label="Back"
+                variant="ghost"
+                onPress={closeRecoveryLayer}
+                style={{ marginTop: space.sm }}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1100,14 +937,6 @@ const styles = StyleSheet.create({
     color: colors.red,
     fontWeight: "600",
     fontSize: 14,
-  },
-  operatorRouteAssistChip: {
-    borderLeftWidth: 4,
-    borderLeftColor: "#38bdf8",
-  },
-  operatorRouteAssistTitle: {
-    fontSize: 15,
-    color: "#e0f2fe",
   },
   headerGlassAnchor: {
     position: "absolute",
@@ -1351,97 +1180,96 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20,
   },
-  strip: {
-    flexDirection: "row",
-    gap: space.sm,
-    paddingVertical: space.sm,
-  },
-  opSectionHead: {
-    marginTop: space.lg,
-    marginBottom: space.xs,
-    gap: 4,
-  },
-  labelPlain: {
-    marginBottom: 0,
-  },
-  opExplain: {
-    color: colors.textMuted,
-    fontSize: 12,
-    lineHeight: 16,
-    marginTop: 2,
-    fontWeight: "500",
-  },
-  opCard: {
-    width: 138,
-    backgroundColor: colors.surface2,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: space.md,
-  },
-  opCardFocused: {
-    borderColor: colors.borderOrange,
-    borderWidth: 1.5,
-    backgroundColor: colors.orangeFaint,
-    shadowColor: colors.orange,
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
-  },
-  opCardPressed: {
-    opacity: 0.92,
-  },
-  opAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.orangeFaint,
-    borderWidth: 1,
-    borderColor: colors.borderOrange,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: space.sm,
-  },
-  opAvatarText: { color: colors.orange, fontWeight: "800", fontSize: 12 },
-  opName: { color: colors.white, fontWeight: "700", fontSize: 13 },
-  opDistanceEta: {
-    color: colors.orange,
-    fontWeight: "700",
-    marginTop: 4,
-    fontSize: 12,
-    lineHeight: 15,
-  },
-  opGearRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 4,
-    marginTop: space.sm,
-  },
-  opChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    borderRadius: radii.sm,
-    backgroundColor: colors.surface3,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderOrange,
-  },
-  opChipLabel: {
-    color: colors.textMuted,
-    fontSize: 10,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
-  },
-  opRating: { color: colors.textMuted, marginTop: space.sm, fontSize: 12 },
   geoAttribution: {
     color: colors.textFaint,
     fontSize: 10,
     lineHeight: 14,
     marginTop: space.md,
     textAlign: "center",
+  },
+  recoveryLayerRoot: {
+    flex: 1,
+  },
+  recoveryLayerBackdropPress: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 0,
+  },
+  recoveryLayerDim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(6,6,10,0.52)",
+  },
+  recoveryLayerForeground: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1,
+    justifyContent: "flex-end",
+    paddingHorizontal: space.md,
+    paddingBottom: 0,
+  },
+  recoveryLayerScroll: {
+    flexShrink: 1,
+  },
+  recoveryLayerSheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radii.lg,
+    borderTopRightRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderBottomWidth: 0,
+    paddingHorizontal: space.xl,
+    paddingTop: space.lg,
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: -4 },
+    elevation: 12,
+  },
+  recoveryLayerTitle: {
+    color: colors.white,
+    fontSize: 20,
+    fontWeight: "800",
+    marginBottom: space.xs,
+  },
+  recoveryLayerLead: {
+    color: colors.textMuted,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "500",
+    marginBottom: space.lg,
+  },
+  recoveryKv: {
+    marginBottom: space.md,
+  },
+  recoveryK: {
+    color: colors.textFaint,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  recoveryV: {
+    color: colors.text,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "600",
+  },
+  recoveryInsight: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: space.sm,
+    marginTop: space.sm,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+    borderRadius: radii.md,
+    backgroundColor: colors.surface2,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  recoveryInsightText: {
+    flex: 1,
+    color: colors.textMuted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "500",
   },
 });
