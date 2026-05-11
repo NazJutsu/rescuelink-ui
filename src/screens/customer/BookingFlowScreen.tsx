@@ -10,7 +10,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RLButton, RLSectionLabel } from "../../components/ui";
 import { buildMockActiveJob, useApp } from "../../context/AppContext";
@@ -24,7 +24,12 @@ const STEPS = 4;
 export function BookingFlowScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const route = useRoute<RouteProp<RootStackParamList, "BookingFlow">>();
   const { vehicles, beginActiveJob } = useApp();
+
+  const pickupDisplay =
+    route.params?.pickupLabel?.trim() || MOCK_PICKUP_LABEL;
+  const dropoffFromHome = route.params?.dropoffLabel?.trim();
 
   const [step, setStep] = useState(0);
   const [vehicleId, setVehicleId] = useState(
@@ -122,7 +127,15 @@ export function BookingFlowScreen() {
             <RLSectionLabel>Step 1 — Location & vehicle</RLSectionLabel>
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Pickup</Text>
-              <Text style={styles.cardBody}>{MOCK_PICKUP_LABEL}</Text>
+              <Text style={styles.cardBody}>{pickupDisplay}</Text>
+              {dropoffFromHome ? (
+                <>
+                  <Text style={[styles.cardTitle, { marginTop: space.md }]}>
+                    Drop-off
+                  </Text>
+                  <Text style={styles.cardBody}>{dropoffFromHome}</Text>
+                </>
+              ) : null}
               <Text style={[styles.cardTitle, { marginTop: space.md }]}>
                 Can the vehicle move?
               </Text>
