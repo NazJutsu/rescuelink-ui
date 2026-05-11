@@ -233,7 +233,7 @@ export function HomeMapScreen() {
           });
         },
       }),
-    [collapsedOffset],
+    [collapsedOffset, translateY],
   );
 
   useEffect(() => {
