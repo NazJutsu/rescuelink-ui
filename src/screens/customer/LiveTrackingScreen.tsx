@@ -1,40 +1,132 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
-import MapView, { Marker } from "react-native-maps";
+import {
+  Alert,
+  Linking,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import MapView, { Marker, Polyline } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RLButton } from "../../components/ui";
-import { useApp } from "../../context/AppContext";
-import { colors, radii, space } from "../../theme/tokens";
+import { buildMockActiveJob, useApp } from "../../context/AppContext";
 import type { RootStackParamList } from "../../navigation/types";
+import { colors, radii, space } from "../../theme/tokens";
+
+const MOCK_TICKETS = 40;
+const MOCK_TICK_MS = 800;
+
+/** Linear interpolation helper for demo driver path (straight-line approximation). */
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
 
 export function LiveTrackingScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { activeJob, clearActiveJob, completeActiveJob } = useApp();
+  const {
+    activeJob,
+    beginActiveJob,
+    clearActiveJob,
+    completeActiveJob,
+  } = useApp();
+  const mapRef = useRef<MapView>(null);
   const [driverLat, setDriverLat] = useState(activeJob?.driverLat ?? 51.53);
   const [driverLng, setDriverLng] = useState(activeJob?.driverLng ?? -0.09);
   const [eta, setEta] = useState(activeJob?.etaMinutes ?? 6);
+  const [progressT, setProgressT] = useState(0);
   const tick = useRef(0);
 
   useEffect(() => {
     if (!activeJob) return;
+    tick.current = 0;
+    setDriverLat(activeJob.driverLat);
+    setDriverLng(activeJob.driverLng);
+    setEta(activeJob.etaMinutes);
+    setProgressT(0);
+
+    const initialFit = () => {
+      mapRef.current?.fitToCoordinates(
+        [
+          { latitude: activeJob.driverLat, longitude: activeJob.driverLng },
+          { latitude: activeJob.pickupLat, longitude: activeJob.pickupLng },
+        ],
+        {
+          edgePadding: {
+            top: insets.top + 100,
+            right: 44,
+            bottom: 260,
+            left: 44,
+          },
+          animated: false,
+        },
+      );
+    };
+    requestAnimationFrame(initialFit);
+
     const id = setInterval(() => {
       tick.current += 1;
-      const t = Math.min(1, tick.current / 40);
-      setDriverLat(activeJob.driverLat + (activeJob.pickupLat - activeJob.driverLat) * t);
-      setDriverLng(activeJob.driverLng + (activeJob.pickupLng - activeJob.driverLng) * t);
+      const t = Math.min(1, tick.current / MOCK_TICKETS);
+      setProgressT(t);
+      setDriverLat(lerp(activeJob.driverLat, activeJob.pickupLat, t));
+      setDriverLng(lerp(activeJob.driverLng, activeJob.pickupLng, t));
       setEta(Math.max(1, Math.round(activeJob.etaMinutes * (1 - t))));
-    }, 800);
+
+      if (tick.current % 4 === 0) {
+        mapRef.current?.fitToCoordinates(
+          [
+            {
+              latitude: lerp(activeJob.driverLat, activeJob.pickupLat, t),
+              longitude: lerp(activeJob.driverLng, activeJob.pickupLng, t),
+            },
+            {
+              latitude: activeJob.pickupLat,
+              longitude: activeJob.pickupLng,
+            },
+          ],
+          {
+            edgePadding: {
+              top: insets.top + 100,
+              right: 44,
+              bottom: 260,
+              left: 44,
+            },
+            animated: true,
+          },
+        );
+      }
+    }, MOCK_TICK_MS);
+
     return () => clearInterval(id);
-  }, [activeJob]);
+  }, [activeJob, insets.top]);
+
+  const startTrackingDemo = () => {
+    beginActiveJob(
+      buildMockActiveJob({
+        jobId: `demo_track_${Date.now()}`,
+        quoteTotal: 98.5,
+        issueLabel: "Demo breakdown — mocked driver movement toward pickup",
+        vehicleLabel: "Ford Focus · AB21 CDE",
+      }),
+    );
+  };
 
   if (!activeJob) {
     return (
       <View style={[styles.empty, { paddingTop: insets.top }]}>
-        <Text style={styles.emptyText}>No active job (mock).</Text>
-        <RLButton label="Back home" onPress={() => navigation.navigate("MainTabs")} />
+        <Text style={styles.emptyText}>
+          Nothing is being tracked right now — this screen is wired for demos with a fake GPS path
+          (straight line toward pickup, no backend).
+        </Text>
+        <RLButton label="Run live tracking demo" onPress={startTrackingDemo} />
+        <View style={{ height: space.md }} />
+        <Pressable onPress={() => navigation.navigate("MainTabs")} hitSlop={12}>
+          <Text style={styles.linkBack}>Back to home</Text>
+        </Pressable>
       </View>
     );
   }
@@ -60,9 +152,39 @@ export function LiveTrackingScreen() {
     longitudeDelta: 0.05,
   };
 
+  const routeLine = [
+    { latitude: activeJob.driverLat, longitude: activeJob.driverLng },
+    { latitude: activeJob.pickupLat, longitude: activeJob.pickupLng },
+  ];
+  const routeSoFar =
+    progressT >= 1
+      ? routeLine
+      : [
+          { latitude: activeJob.driverLat, longitude: activeJob.driverLng },
+          { latitude: driverLat, longitude: driverLng },
+        ];
+
+  const statusTitle =
+    progressT >= 0.96
+      ? "Almost at pickup point"
+      : activeJob.status === "en_route"
+        ? "Operator en route"
+        : "Job update";
+
   return (
     <View style={styles.flex}>
-      <MapView style={styles.map} initialRegion={initialRegion}>
+      <MapView ref={mapRef} style={styles.map} initialRegion={initialRegion}>
+        <Polyline
+          coordinates={routeLine}
+          strokeColor="rgba(249,115,22,0.35)"
+          strokeWidth={10}
+          lineDashPattern={Platform.OS === "ios" ? [12, 8] : undefined}
+        />
+        <Polyline
+          coordinates={routeSoFar}
+          strokeColor={colors.orange}
+          strokeWidth={3}
+        />
         <Marker
           coordinate={{ latitude: activeJob.pickupLat, longitude: activeJob.pickupLng }}
           title="Pickup"
@@ -71,15 +193,16 @@ export function LiveTrackingScreen() {
         <Marker
           coordinate={{ latitude: driverLat, longitude: driverLng }}
           title={activeJob.operatorName}
-          description="Recovery truck"
+          description="Recovery truck (mock GPS)"
+          pinColor={colors.orange}
         />
       </MapView>
 
       <View style={[styles.banner, { top: insets.top + space.sm }]}>
-        <Text style={styles.bannerText}>
-          {activeJob.status === "en_route" ? "Operator en route" : "Job update"}
+        <Text style={styles.bannerText}>{statusTitle}</Text>
+        <Text style={styles.bannerEta}>
+          ETA ~{eta} min · Demo path (straight line, no server)
         </Text>
-        <Text style={styles.bannerEta}>ETA ~{eta} min</Text>
       </View>
 
       <View style={[styles.sheet, { paddingBottom: insets.bottom + space.lg }]}>
@@ -168,5 +291,16 @@ const styles = StyleSheet.create({
     marginTop: space.lg,
   },
   empty: { flex: 1, backgroundColor: colors.bg, padding: space.xl, justifyContent: "center" },
-  emptyText: { color: colors.textMuted, marginBottom: space.lg },
+  emptyText: {
+    color: colors.textMuted,
+    marginBottom: space.lg,
+    lineHeight: 22,
+    fontSize: 15,
+  },
+  linkBack: {
+    color: colors.orange,
+    fontWeight: "700",
+    fontSize: 16,
+    textAlign: "center",
+  },
 });

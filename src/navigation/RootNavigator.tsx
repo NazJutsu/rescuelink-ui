@@ -14,6 +14,7 @@ import { MyVehiclesScreen } from "../screens/customer/MyVehiclesScreen";
 import { AccountScreen } from "../screens/customer/AccountScreen";
 import { BookingFlowScreen } from "../screens/customer/BookingFlowScreen";
 import { LiveTrackingScreen } from "../screens/customer/LiveTrackingScreen";
+import { NotificationsScreen } from "../screens/customer/NotificationsScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<CustomerTabParamList>();
@@ -78,6 +79,11 @@ export function RootNavigator() {
             <Stack.Screen
               name="BookingFlow"
               component={BookingFlowScreen}
+              options={{ presentation: "modal", animation: "slide_from_bottom" }}
+            />
+            <Stack.Screen
+              name="Notifications"
+              component={NotificationsScreen}
               options={{ presentation: "modal", animation: "slide_from_bottom" }}
             />
             <Stack.Screen name="LiveTracking" component={LiveTrackingScreen} />

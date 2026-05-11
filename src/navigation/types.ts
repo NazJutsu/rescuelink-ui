@@ -13,4 +13,5 @@ export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<CustomerTabParamList> | undefined;
   BookingFlow: { pickupLabel?: string; dropoffLabel?: string } | undefined;
   LiveTracking: undefined;
+  Notifications: undefined;
 };
