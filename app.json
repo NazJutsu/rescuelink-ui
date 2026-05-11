@@ -21,7 +21,13 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "RescueLink uses your location when you tap Current location to fill your pickup address."
+        }
+      ]
     ]
   }
 }

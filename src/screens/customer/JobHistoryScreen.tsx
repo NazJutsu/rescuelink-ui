@@ -1,7 +1,6 @@
 import React from "react";
 import { Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { RLButton } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { colors, radii, space } from "../../theme/tokens";
 import type { PastJob } from "../../mock/types";

@@ -3,6 +3,12 @@ import type { OperatorPin, PastJob, Vehicle } from "./types";
 export const MOCK_PICKUP_LABEL = "Near Shoreditch High St, London";
 export const MOCK_DROPOFF_LABEL = "Halfords Autocentre, Islington (optional)";
 
+/** Placeholders for free-form address fields on Home */
+export const ADDRESS_PICKUP_PLACEHOLDER =
+  "Street, town, postcode (full address)";
+export const ADDRESS_DROPOFF_PLACEHOLDER =
+  "Garage, dealership, or address (optional)";
+
 /** London-ish centroid for map + mock pins */
 export const MAP_CENTER = {
   latitude: 51.5245,
