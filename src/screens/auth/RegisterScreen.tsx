@@ -14,9 +14,9 @@ import { RLButton, RLField, RLSectionLabel } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { colors, radii, space } from "../../theme/tokens";
 import type { UserRole } from "../../mock/types";
-import type { RootStackParamList } from "../../navigation/types";
+import type { CombinedStackParamList } from "../../navigation/types";
 
-type Props = NativeStackScreenProps<RootStackParamList, "Register">;
+type Props = NativeStackScreenProps<CombinedStackParamList, "Register">;
 
 export function RegisterScreen({ navigation }: Props) {
   const { register } = useApp();
@@ -38,6 +38,10 @@ export function RegisterScreen({ navigation }: Props) {
           ? 2
           : 3;
 
+  const openLegal = (kind: "terms" | "privacy" | "operator_contract") => {
+    navigation.navigate("Legal", { kind });
+  };
+
   return (
     <KeyboardAvoidingView
       style={styles.flex}
@@ -49,10 +53,9 @@ export function RegisterScreen({ navigation }: Props) {
       >
         <Text style={styles.screenTitle}>Create account</Text>
         <Text style={styles.screenSub}>
-          Role selector matches the business plan; this MVP only wires the
-          customer journey.
+          Drivers complete compliance first, then use the Partner panel (Home · Jobs · Earnings ·
+          More)—no passenger map. Customers use the map home screen.
         </Text>
-
         <RLSectionLabel>Role</RLSectionLabel>
         <View style={styles.roleRow}>
           {(
@@ -77,6 +80,17 @@ export function RegisterScreen({ navigation }: Props) {
             );
           })}
         </View>
+
+        {role === "operator" ? (
+          <View style={styles.driverCallout}>
+            <Text style={styles.driverCalloutTitle}>Driver signup path</Text>
+            <Text style={styles.driverCalloutBody}>
+              You complete verification first, wait for approval, then unlock the Partner tabs:
+              availability & offers on Home, Jobs, earnings tab, and account on More.
+              You won’t see the passenger map unless you also create a customer account.
+            </Text>
+          </View>
+        ) : null}
 
         <RLField label="First name" value={firstName} onChangeText={setFirstName} />
         <RLField label="Last name" value={lastName} onChangeText={setLastName} />
@@ -141,22 +155,32 @@ export function RegisterScreen({ navigation }: Props) {
         >
           <View style={[styles.checkBox, accepted && styles.checkBoxOn]} />
           <Text style={styles.checkLabel}>
-            I agree to Terms & GDPR consent (mock checkbox)
+            Tap the links below, then checkbox to acknowledge you read them (placeholder copy).
           </Text>
         </Pressable>
+
+        <View style={styles.legalLinks}>
+          <Pressable onPress={() => openLegal("terms")}>
+            <Text style={styles.linkBtn}>Terms of service</Text>
+          </Pressable>
+          <Pressable onPress={() => openLegal("privacy")}>
+            <Text style={styles.linkBtn}>Privacy notice</Text>
+          </Pressable>
+          {role === "operator" ? (
+            <Pressable onPress={() => openLegal("operator_contract")}>
+              <Text style={styles.linkBtn}>Operator framework</Text>
+            </Pressable>
+          ) : null}
+        </View>
 
         <RLButton
           label="Create account"
           onPress={() => {
-            if (role === "operator") {
-              Alert.alert(
-                "Operator onboarding",
-                "Document upload and approval are not in this customer MVP. Switch role to Customer to continue.",
-              );
-              return;
-            }
             if (!accepted) {
-              Alert.alert("Consent required", "Please accept Terms & GDPR to continue.");
+              Alert.alert(
+                "Consent required",
+                "Please accept Terms, Privacy, and frameworks that apply.",
+              );
               return;
             }
             if (password !== confirm) {
@@ -168,7 +192,7 @@ export function RegisterScreen({ navigation }: Props) {
               lastName: lastName || "Rivera",
               email: email || "new@example.com",
               phone: phone || "+44 7700 900321",
-              role: "customer",
+              role,
             });
           }}
           style={styles.cta}
@@ -212,6 +236,20 @@ const styles = StyleSheet.create({
   },
   roleChipText: { color: colors.textMuted, fontWeight: "600" },
   roleChipTextOn: { color: colors.white },
+  driverCallout: {
+    backgroundColor: "rgba(34,197,94,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(34,197,94,0.35)",
+    borderRadius: radii.md,
+    padding: space.md,
+    marginBottom: space.lg,
+  },
+  driverCalloutTitle: {
+    color: colors.green,
+    fontWeight: "800",
+    marginBottom: space.xs,
+  },
+  driverCalloutBody: { color: colors.textMuted, lineHeight: 20, fontSize: 14 },
   meterRow: { flexDirection: "row", gap: 6, marginBottom: 6 },
   meterSeg: {
     flex: 1,
@@ -220,7 +258,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface3,
   },
   meterHint: { color: colors.textMuted, fontSize: 13, marginBottom: space.lg },
-  checkRow: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: space.lg },
+  checkRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginBottom: space.lg },
   checkBox: {
     width: 22,
     height: 22,
@@ -228,9 +266,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderOrange,
     backgroundColor: colors.surface2,
+    marginTop: 2,
   },
   checkBoxOn: { backgroundColor: colors.orange },
   checkLabel: { flex: 1, color: colors.textMuted, lineHeight: 20 },
+  legalLinks: {
+    gap: space.sm,
+    marginBottom: space.xl,
+  },
+  linkBtn: { color: colors.orange, fontWeight: "700", paddingVertical: 4 },
   cta: { marginBottom: space.md },
   back: { color: colors.orange, fontWeight: "600", textAlign: "center" },
 });

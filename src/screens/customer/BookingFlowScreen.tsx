@@ -13,10 +13,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RLButton, RLSectionLabel } from "../../components/ui";
-import { buildMockActiveJob, useApp } from "../../context/AppContext";
+import { useApp } from "../../context/AppContext";
 import { ISSUE_OPTIONS, MOCK_PICKUP_LABEL } from "../../mock/customerSeed";
 import { buildMockQuote } from "../../mock/quote";
-import type { RootStackParamList } from "../../navigation/types";
+import { buildMockActiveJob } from "../../mock/activeJob";
+import type { CombinedStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
 
 const SCROLLBAR_TRACK_W = 4;
@@ -25,13 +26,19 @@ const SCROLLBAR_THUMB_MIN = 28;
 
 export function BookingFlowScreen() {
   const insets = useSafeAreaInsets();
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const route = useRoute<RouteProp<RootStackParamList, "BookingFlow">>();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<CombinedStackParamList>>();
+  const route = useRoute<RouteProp<CombinedStackParamList, "BookingFlow">>();
   const { vehicles, beginActiveJob } = useApp();
 
   const pickupDisplay =
     route.params?.pickupLabel?.trim() || MOCK_PICKUP_LABEL;
   const dropoffFromHome = route.params?.dropoffLabel?.trim();
+
+  const roadMiles = route.params?.roadMiles;
+  const onMotorway = route.params?.onMotorway ?? false;
+  const pickupLat = route.params?.pickupLat;
+  const pickupLng = route.params?.pickupLng;
 
   const [vehicleId, setVehicleId] = useState(
     () => vehicles.find((v) => v.isDefault)?.id ?? vehicles[0]?.id ?? "",
@@ -61,11 +68,14 @@ export function BookingFlowScreen() {
   const quote = useMemo(
     () =>
       buildMockQuote({
-        distanceMiles: 8.2,
-        onMotorway: false,
+        distanceMiles:
+          typeof roadMiles === "number" && Number.isFinite(roadMiles)
+            ? roadMiles
+            : 8.2,
+        onMotorway,
         canMove,
       }),
-    [canMove],
+    [canMove, roadMiles, onMotorway],
   );
 
   const submit = () => {
@@ -75,6 +85,8 @@ export function BookingFlowScreen() {
         quoteTotal: quote.totalGbp,
         issueLabel,
         vehicleLabel,
+        pickupLat,
+        pickupLng,
       }),
     );
     navigation.replace("LiveTracking");

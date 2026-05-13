@@ -1,12 +1,17 @@
 import React from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RLButton } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
+import type { CombinedStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
 
 export function AccountScreen() {
   const insets = useSafeAreaInsets();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<CombinedStackParamList>>();
   const { user, logout } = useApp();
 
   if (!user) return null;
@@ -41,12 +46,34 @@ export function AccountScreen() {
             {user.firstName} {user.lastName}
           </Text>
           <View style={styles.badge}>
-            <Text style={styles.badgeText}>Customer</Text>
+            <Text style={styles.badgeText}>
+              {user.role === "operator" ? "Driver" : "Customer"}
+            </Text>
           </View>
         </View>
       </View>
 
-      <Text style={styles.section}>Account</Text>
+      <Text style={styles.section}>Legal</Text>
+      <Pressable
+        style={styles.row}
+        onPress={() => navigation.navigate("Legal", { kind: "terms" })}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>Terms</Text>
+        </View>
+        <Text style={styles.chev}>›</Text>
+      </Pressable>
+      <Pressable
+        style={styles.row}
+        onPress={() => navigation.navigate("Legal", { kind: "privacy" })}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>Privacy notice</Text>
+        </View>
+        <Text style={styles.chev}>›</Text>
+      </Pressable>
+
+      <Text style={[styles.section, { marginTop: space.sm }]}>Account</Text>
       {rows.map((r) => (
         <Pressable
           key={r.label}

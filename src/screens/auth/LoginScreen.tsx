@@ -13,9 +13,9 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RLButton, RLField } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { colors, radii, space } from "../../theme/tokens";
-import type { RootStackParamList } from "../../navigation/types";
+import type { CombinedStackParamList } from "../../navigation/types";
 
-type Props = NativeStackScreenProps<RootStackParamList, "Login">;
+type Props = NativeStackScreenProps<CombinedStackParamList, "Login">;
 
 export function LoginScreen({ navigation }: Props) {
   const { login } = useApp();
@@ -34,14 +34,17 @@ export function LoginScreen({ navigation }: Props) {
       >
         <View style={styles.badge}>
           <View style={styles.badgeDot} />
-          <Text style={styles.badgeText}>Customer</Text>
+          <Text style={styles.badgeText}>Demo</Text>
         </View>
         <Text style={styles.title}>
           Rescue<Text style={styles.titleAccent}>Link</Text>
         </Text>
         <Text style={styles.sub}>
-          Sign in to request on-demand recovery with upfront pricing (mock
-          data).
+          Passenger app: use any normal email → map, booking, vehicles. Driver app:
+          put <Text style={styles.monoHint}>operator</Text> in the email (
+          try <Text style={styles.monoHint}>jamie.operator@test.com</Text>) to skip to an
+          approved driver with the Partner panel (Home · Jobs · Earnings · More). New drivers choose
+          Driver on Register, complete onboarding, tap Approve on the pending screen to preview UI.
         </Text>
 
         <RLField
@@ -134,6 +137,12 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.5,
     textTransform: "uppercase",
+  },
+  monoHint: {
+    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
+    color: colors.orange,
+    fontWeight: "700",
+    fontSize: 13,
   },
   title: {
     fontSize: 34,

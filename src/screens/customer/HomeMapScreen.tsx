@@ -40,7 +40,7 @@ import {
   seedNotifications,
   unreadNotificationsCount,
 } from "../../mock/notificationsSeed";
-import type { RootStackParamList } from "../../navigation/types";
+import type { CombinedStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
 import {
   estimateRoadMilesAndMinutes,
@@ -117,7 +117,7 @@ export function HomeMapScreen() {
 
   const { user } = useApp();
   const nav = useNavigation();
-  const rootNav = nav.getParent<NativeStackNavigationProp<RootStackParamList>>();
+  const rootNav = nav.getParent<NativeStackNavigationProp<CombinedStackParamList>>();
   const [pickup, setPickup] = useState("");
   const [dropoff, setDropoff] = useState("");
   const [pickupCoords, setPickupCoords] = useState<LatLng | null>(null);
@@ -144,6 +144,12 @@ export function HomeMapScreen() {
   const blurClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [weatherSnap, setWeatherSnap] = useState<OpenMeteoCurrent | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
+  const [weatherError, setWeatherError] = useState<string | null>(null);
+  const [weatherRetryNonce, setWeatherRetryNonce] = useState(0);
+  const [addressSearchError, setAddressSearchError] = useState<string | null>(
+    null,
+  );
+  const [addressRetryNonce, setAddressRetryNonce] = useState(0);
   const [recoveryLayerVisible, setRecoveryLayerVisible] = useState(false);
 
   const wxLat = pickupCoords?.latitude ?? MAP_CENTER.latitude;
@@ -225,6 +231,7 @@ export function HomeMapScreen() {
     if (!activeAddressField) {
       setAddressSuggestions([]);
       setAddressSuggestLoading(false);
+      setAddressSearchError(null);
       return;
     }
 
@@ -234,6 +241,7 @@ export function HomeMapScreen() {
     if (q.length < 2) {
       setAddressSuggestions([]);
       setAddressSuggestLoading(false);
+      setAddressSearchError(null);
       return;
     }
 
@@ -242,11 +250,17 @@ export function HomeMapScreen() {
       setAddressSuggestLoading(true);
       try {
         const hits = await photonSearch(q, 8, ac.signal);
-        if (!ac.signal.aborted) setAddressSuggestions(hits);
+        if (!ac.signal.aborted) {
+          setAddressSuggestions(hits);
+          setAddressSearchError(null);
+        }
       } catch (e: unknown) {
         const aborted = e instanceof Error && e.name === "AbortError";
         if (aborted) return;
-        if (!ac.signal.aborted) setAddressSuggestions([]);
+        if (!ac.signal.aborted) {
+          setAddressSuggestions([]);
+          setAddressSearchError("Address search failed · try again");
+        }
       } finally {
         if (!ac.signal.aborted) setAddressSuggestLoading(false);
       }
@@ -256,21 +270,29 @@ export function HomeMapScreen() {
       clearTimeout(t);
       ac.abort();
     };
-  }, [activeAddressField, pickup, dropoff]);
+  }, [activeAddressField, pickup, dropoff, addressRetryNonce]);
+
+  useEffect(() => {
+    setAddressSearchError(null);
+  }, [activeAddressField]);
 
   useEffect(() => {
     const ac = new AbortController();
     setWeatherLoading(true);
+    setWeatherError(null);
     fetchCurrentWeatherOpenMeteo(wxLat, wxLon, ac.signal)
       .then((snap) => {
         if (!ac.signal.aborted) setWeatherSnap(snap);
       })
-      .catch(() => {})
+      .catch(() => {
+        if (!ac.signal.aborted)
+          setWeatherError("Couldn't load weather");
+      })
       .finally(() => {
         if (!ac.signal.aborted) setWeatherLoading(false);
       });
     return () => ac.abort();
-  }, [wxLat, wxLon]);
+  }, [wxLat, wxLon, weatherRetryNonce]);
 
   const panResponder = useMemo(
     () =>
@@ -412,11 +434,27 @@ export function HomeMapScreen() {
 
   const confirmRecoveryBooking = useCallback(() => {
     setRecoveryLayerVisible(false);
+    const pickupLL =
+      pickupCoords ??
+      (routeEndpoints?.from != null ? routeEndpoints.from : null);
     rootNav?.navigate("BookingFlow", {
       pickupLabel: pickup.trim() || undefined,
       dropoffLabel: dropoff.trim() || undefined,
+      roadMiles: routeEstimate?.roadMiles,
+      onMotorway: false,
+      pickupLat: pickupLL?.latitude,
+      pickupLng: pickupLL?.longitude,
+      dropoffLat: routeEndpoints?.to.latitude,
+      dropoffLng: routeEndpoints?.to.longitude,
     });
-  }, [dropoff, pickup, rootNav]);
+  }, [
+    dropoff,
+    pickup,
+    pickupCoords,
+    rootNav,
+    routeEndpoints,
+    routeEstimate?.roadMiles,
+  ]);
 
   const previewPin = useMemo(
     (): LatLng =>
@@ -590,6 +628,18 @@ export function HomeMapScreen() {
               </>
             ) : weatherLoading ? (
               <ActivityIndicator color={colors.textMuted} size="small" />
+            ) : weatherError ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Text style={styles.weatherUnavailable}>{weatherError}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry loading weather"
+                  onPress={() => setWeatherRetryNonce((n) => n + 1)}
+                  hitSlop={8}
+                >
+                  <Text style={styles.weatherRetry}>Retry</Text>
+                </Pressable>
+              </View>
             ) : (
               <Text style={styles.weatherUnavailable}>
                 Weather unavailable · Open-Meteo
@@ -702,6 +752,21 @@ export function HomeMapScreen() {
               )}
             </View>
           ) : null}
+          {activeAddressField === "pickup" &&
+          addressSearchError &&
+          !addressSuggestLoading &&
+          pickup.trim().length >= 2 ? (
+            <View style={styles.addressErrorBanner}>
+              <Text style={styles.addressErrorText}>{addressSearchError}</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setAddressRetryNonce((n) => n + 1)}
+                hitSlop={8}
+              >
+                <Text style={styles.addressErrorRetry}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : null}
 
           <Text style={[styles.label, { marginTop: space.sm }]}>
             Drop-off (optional)
@@ -764,6 +829,21 @@ export function HomeMapScreen() {
                   })}
                 </ScrollView>
               )}
+            </View>
+          ) : null}
+          {activeAddressField === "dropoff" &&
+          addressSearchError &&
+          !addressSuggestLoading &&
+          dropoff.trim().length >= 2 ? (
+            <View style={styles.addressErrorBanner}>
+              <Text style={styles.addressErrorText}>{addressSearchError}</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setAddressRetryNonce((n) => n + 1)}
+                hitSlop={8}
+              >
+                <Text style={styles.addressErrorRetry}>Retry</Text>
+              </Pressable>
             </View>
           ) : null}
 
@@ -1062,6 +1142,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "500",
   },
+  weatherRetry: {
+    color: colors.orange,
+    fontSize: 13,
+    fontWeight: "700",
+  },
   sheet: {
     position: "absolute",
     left: 0,
@@ -1153,6 +1238,21 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface2,
     overflow: "hidden",
   },
+  addressErrorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: space.md,
+    marginBottom: space.sm,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.borderOrange,
+    backgroundColor: colors.orangeFaint,
+  },
+  addressErrorText: { flex: 1, color: colors.textMuted, fontSize: 13 },
+  addressErrorRetry: { color: colors.orange, fontWeight: "700", fontSize: 13 },
   suggestionList: {
     maxHeight: 220,
   },

@@ -13,8 +13,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RLButton } from "../../components/ui";
-import { buildMockActiveJob, useApp } from "../../context/AppContext";
-import type { RootStackParamList } from "../../navigation/types";
+import { buildMockActiveJob } from "../../mock/activeJob";
+import { useApp } from "../../context/AppContext";
+import type { CombinedStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
 
 const MOCK_TICKETS = 40;
@@ -27,7 +28,8 @@ function lerp(a: number, b: number, t: number) {
 
 export function LiveTrackingScreen() {
   const insets = useSafeAreaInsets();
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<CombinedStackParamList>>();
   const {
     activeJob,
     beginActiveJob,
