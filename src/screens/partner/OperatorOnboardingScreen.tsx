@@ -1,5 +1,6 @@
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -7,19 +8,30 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { DevPageBadge } from "../../dev/DevPageBadge";
 import { RLButton, RLField, RLSectionLabel } from "../../components/ui";
-import { useApp } from "../../context/AppContext";
-import type { MockUploadedFile, OperatorProfile } from "../../mock/types";
+import { FieldGroup } from "../../components/FieldGroup";
+import { DEV_PAGES } from "../../dev/pageNumbers";
+import { useApp } from "../../state/AppContext";
+import type { MockUploadedFile, OperatorProfile } from "../../types";
 import type { CombinedStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
-import { isOperatorProfileSubmittable } from "../../mock/operatorProfile";
+import { isOperatorProfileSubmittable } from "../../data/operatorProfile";
+import { isFirebaseConfigured } from "../../firebase/config";
+import { pickDocument, uploadOperatorDoc } from "../../firebase/storageService";
 
-const TOTAL_STEPS = 7;
+const TOTAL_STEPS = 6;
+const LAST_STEP_INDEX = TOTAL_STEPS - 1;
+
+function clampOnboardingStep(index: number): number {
+  return Math.min(Math.max(0, index), LAST_STEP_INDEX);
+}
 
 function mockFile(name: string, mime: string): MockUploadedFile {
   return { fileName: name, mime, uploadedAt: new Date().toISOString() };
@@ -29,18 +41,101 @@ function UploadChip({
   label,
   value,
   onPick,
+  uploading,
 }: {
   label: string;
   value?: MockUploadedFile;
   onPick: () => void;
+  uploading?: boolean;
 }) {
+  const fileName = value?.fileName
+    ? value.fileName.startsWith("http")
+      ? "Uploaded ✓"
+      : value.fileName
+    : null;
+
   return (
-    <Pressable onPress={onPick} style={styles.uploadChip}>
+    <Pressable onPress={onPick} style={styles.uploadChip} disabled={uploading}>
       <Text style={styles.uploadLabel}>{label}</Text>
-      <Text style={styles.uploadHint}>
-        {value ? `${value.fileName}` : "Simulate capture (demo)"}
-      </Text>
+      {uploading ? (
+        <ActivityIndicator size="small" color={colors.orange} />
+      ) : (
+        <Text style={styles.uploadHint}>
+          {fileName ?? (isFirebaseConfigured() ? "Tap to pick image" : "Simulate capture (demo)")}
+        </Text>
+      )}
     </Pressable>
+  );
+}
+
+const LICENCE_CATEGORIES = ["A", "B", "C", "C1", "C+E", "D"] as const;
+
+function CategoryPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const selected = value
+    ? value.split(",").map((c) => c.trim()).filter(Boolean)
+    : [];
+
+  const isCustom = (cat: string) =>
+    !(LICENCE_CATEGORIES as readonly string[]).includes(cat);
+
+  const customOther = selected.filter(isCustom).join(", ");
+
+  const toggle = (cat: string) => {
+    const next = selected.includes(cat)
+      ? selected.filter((c) => c !== cat)
+      : [...selected, cat];
+    const custom = selected.filter(isCustom);
+    onChange([...next.filter((c) => !isCustom(c)), ...custom].join(", "));
+  };
+
+  const setOther = (text: string) => {
+    const preset = selected.filter((c) => !isCustom(c));
+    const extras = text
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean);
+    onChange([...preset, ...extras].join(", "));
+  };
+
+  return (
+    <View style={styles.catCard}>
+      <Text style={styles.catCardLabel}>CATEGORIES HELD</Text>
+      <View style={styles.catChipsRow}>
+        {LICENCE_CATEGORIES.map((cat) => {
+          const on = selected.includes(cat);
+          return (
+            <Pressable
+              key={cat}
+              onPress={() => toggle(cat)}
+              style={[styles.catChip, on && styles.catChipOn]}
+            >
+              <Text style={[styles.catChipText, on && styles.catChipTextOn]}>
+                {cat}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={styles.catHint}>
+        Tap one or more categories. If your licence type is not shown, add it below.
+      </Text>
+      <View style={styles.catDivider} />
+      <Text style={styles.catOtherLabel}>OTHER CATEGORY (OPTIONAL)</Text>
+      <TextInput
+        style={styles.catOtherInput}
+        value={customOther}
+        onChangeText={setOther}
+        placeholder="e.g. B+E, C1+E, LGV"
+        placeholderTextColor={colors.textFaint}
+        autoCapitalize="characters"
+      />
+    </View>
   );
 }
 
@@ -87,7 +182,9 @@ export function OperatorOnboardingScreen() {
   } = useApp();
 
   const p = operatorProfile;
-  const step = p?.onboardingStepIndex ?? 0;
+  const step = clampOnboardingStep(p?.onboardingStepIndex ?? 0);
+
+  const [uploadingField, setUploadingField] = useState<string | null>(null);
 
   const patch = useCallback(
     (u: Partial<OperatorProfile>) => {
@@ -96,12 +193,37 @@ export function OperatorOnboardingScreen() {
     [patchOperatorProfile],
   );
 
+  /** Picks an image and uploads it (real or mock depending on Firebase config). */
+  const handleUpload = useCallback(
+    async (
+      fieldKey: keyof OperatorProfile,
+      mockName: string,
+      mockMime: string,
+    ) => {
+      if (isFirebaseConfigured() && user?.id) {
+        const asset = await pickDocument();
+        if (!asset) return;
+        setUploadingField(fieldKey);
+        try {
+          const file = await uploadOperatorDoc(user.id, fieldKey, asset);
+          patch({ [fieldKey]: file } as Partial<OperatorProfile>);
+        } catch {
+          Alert.alert("Upload failed", "Could not upload file. Please try again.");
+        } finally {
+          setUploadingField(null);
+        }
+      } else {
+        patch({ [fieldKey]: mockFile(mockName, mockMime) } as Partial<OperatorProfile>);
+      }
+    },
+    [user?.id, patch],
+  );
+
   const goLegal = () =>
     navigation.navigate("Legal", { kind: "operator_contract" });
 
   const next = () => {
-    const n = Math.min(TOTAL_STEPS - 1, step + 1);
-    setOperatorStep(n);
+    setOperatorStep(clampOnboardingStep(step + 1));
   };
 
   const back = () => {
@@ -109,10 +231,17 @@ export function OperatorOnboardingScreen() {
     setOperatorStep(n);
   };
 
+  const handleBack = () => {
+    if (step > 0) {
+      back();
+      return;
+    }
+    navigation.goBack();
+  };
+
   const titles = useMemo(
     () => [
       "Identity & driving licence",
-      "Business structure",
       "Insurance & uploads",
       "Operator licensing (heavy goods)",
       "Recovery vehicle",
@@ -139,6 +268,7 @@ export function OperatorOnboardingScreen() {
     Alert.alert(
       "Application sent",
       "RescueLink will verify your documents (backend workflow later). You can approve yourself in dev mode from the pending screen.",
+      [{ text: "OK", onPress: () => navigation.popToTop() }],
     );
   };
 
@@ -147,101 +277,76 @@ export function OperatorOnboardingScreen() {
       case 0:
         return (
           <>
-            <RLSectionLabel>Legal identity</RLSectionLabel>
-            <RLField
-              label="Full legal name"
-              value={p.legalFullName}
-              onChangeText={(t) => patch({ legalFullName: t })}
+            <RLSectionLabel>Personal details</RLSectionLabel>
+            <FieldGroup
+              fields={[
+                {
+                  label: "Full legal name",
+                  value: p.legalFullName,
+                  onChangeText: (t) => patch({ legalFullName: t }),
+                },
+                {
+                  label: "Date of birth",
+                  placeholder: "DD / MM / YYYY",
+                  value: p.dateOfBirth,
+                  onChangeText: (t) => patch({ dateOfBirth: t }),
+                  keyboardType: "numeric",
+                },
+              ]}
             />
-            <RLField
-              label="Date of birth"
-              placeholder="YYYY-MM-DD"
-              value={p.dateOfBirth}
-              onChangeText={(t) => patch({ dateOfBirth: t })}
-            />
-            <RLField
-              label="Residential address line 1"
-              value={p.addressLine1}
-              onChangeText={(t) => patch({ addressLine1: t })}
-            />
-            <RLField
-              label="Postcode"
-              autoCapitalize="characters"
-              value={p.addressPostcode}
-              onChangeText={(t) => patch({ addressPostcode: t })}
+            <RLSectionLabel>Address</RLSectionLabel>
+            <FieldGroup
+              fields={[
+                {
+                  label: "Address line 1",
+                  value: p.addressLine1,
+                  onChangeText: (t) => patch({ addressLine1: t }),
+                },
+                {
+                  label: "Postcode",
+                  value: p.addressPostcode,
+                  onChangeText: (t) => patch({ addressPostcode: t }),
+                  autoCapitalize: "characters",
+                },
+              ]}
             />
             <RLSectionLabel>Licence</RLSectionLabel>
-            <RLField
-              label="Driving licence number"
-              value={p.drivingLicenceNumber}
-              onChangeText={(t) => patch({ drivingLicenceNumber: t })}
+            <FieldGroup
+              fields={[
+                {
+                  label: "Driving licence number",
+                  value: p.drivingLicenceNumber,
+                  onChangeText: (t) => patch({ drivingLicenceNumber: t }),
+                  autoCapitalize: "characters",
+                },
+              ]}
             />
-            <RLField
-              label="Categories held (e.g. B, C, C+E)"
+            <CategoryPicker
               value={p.drivingCategories}
-              onChangeText={(t) => patch({ drivingCategories: t })}
+              onChange={(v) => patch({ drivingCategories: v })}
             />
-            <RLField
-              label="Licence expiry"
-              value={p.drivingLicenceExpiry}
-              onChangeText={(t) => patch({ drivingLicenceExpiry: t })}
+            <FieldGroup
+              fields={[
+                {
+                  label: "Licence expiry",
+                  placeholder: "MM/YY",
+                  value: p.drivingLicenceExpiry,
+                  onChangeText: (t) => patch({ drivingLicenceExpiry: t }),
+                  keyboardType: "numeric",
+                },
+              ]}
             />
             <UploadChip
-              label="Licence image (simulate)"
+              label="Licence image"
               value={p.licenceFront}
+              uploading={uploadingField === "licenceFront"}
               onPick={() =>
-                patch({ licenceFront: mockFile("licence-front.jpg", "image/jpeg") })
+                void handleUpload("licenceFront", "licence-front.jpg", "image/jpeg")
               }
             />
           </>
         );
       case 1:
-        return (
-          <>
-            <Text style={styles.hint}>
-              Companies House number required for Ltd. UTR optional for sole
-              trader tax reporting.
-            </Text>
-            <View style={styles.roleRow}>
-              {(
-                [
-                  ["sole_trader", "Sole trader"],
-                  ["limited_company", "Limited company"],
-                ] as const
-              ).map(([value, label]) => {
-                const selected = p.businessType === value;
-                return (
-                  <Pressable
-                    key={value}
-                    onPress={() => patch({ businessType: value })}
-                    style={[styles.roleChip, selected && styles.roleChipOn]}
-                  >
-                    <Text
-                      style={[
-                        styles.roleChipText,
-                        selected && styles.roleChipTextOn,
-                      ]}
-                    >
-                      {label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <RLField
-              label="Companies House number (Ltd)"
-              value={p.companyNumber}
-              onChangeText={(t) => patch({ companyNumber: t })}
-              editable={p.businessType === "limited_company"}
-            />
-            <RLField
-              label="UTR (optional)"
-              value={p.utr}
-              onChangeText={(t) => patch({ utr: t })}
-            />
-          </>
-        );
-      case 2:
         return (
           <>
             <RLSectionLabel>Recovery / on-hook insurance</RLSectionLabel>
@@ -276,12 +381,11 @@ export function OperatorOnboardingScreen() {
               onChangeText={(t) => patch({ recoveryPolicyExpiry: t })}
             />
             <UploadChip
-              label="Recovery policy certificate PDF (simulate)"
+              label="Recovery policy certificate"
               value={p.recoveryCert}
+              uploading={uploadingField === "recoveryCert"}
               onPick={() =>
-                patch({
-                  recoveryCert: mockFile("recovery-policy.pdf", "application/pdf"),
-                })
+                void handleUpload("recoveryCert", "recovery-policy.pdf", "application/pdf")
               }
             />
             <RLSectionLabel>Public liability</RLSectionLabel>
@@ -296,15 +400,11 @@ export function OperatorOnboardingScreen() {
               onChangeText={(t) => patch({ publicLiabilityExpiry: t })}
             />
             <UploadChip
-              label="Public liability certificate PDF (simulate)"
+              label="Public liability certificate"
               value={p.publicLiabilityCert}
+              uploading={uploadingField === "publicLiabilityCert"}
               onPick={() =>
-                patch({
-                  publicLiabilityCert: mockFile(
-                    "public-liability.pdf",
-                    "application/pdf",
-                  ),
-                })
+                void handleUpload("publicLiabilityCert", "public-liability.pdf", "application/pdf")
               }
             />
             <Pressable
@@ -320,21 +420,17 @@ export function OperatorOnboardingScreen() {
             </Pressable>
             {p.employsStaff ? (
               <UploadChip
-                label="Employers liability certificate PDF (simulate)"
+                label="Employers liability certificate"
                 value={p.employerLiabilityCert}
+                uploading={uploadingField === "employerLiabilityCert"}
                 onPick={() =>
-                  patch({
-                    employerLiabilityCert: mockFile(
-                      "employer-liability.pdf",
-                      "application/pdf",
-                    ),
-                  })
+                  void handleUpload("employerLiabilityCert", "employer-liability.pdf", "application/pdf")
                 }
               />
             ) : null}
           </>
         );
-      case 3:
+      case 2:
         return (
           <>
             <Text style={styles.hint}>
@@ -364,22 +460,18 @@ export function OperatorOnboardingScreen() {
                   onChangeText={(t) => patch({ oLicenceExpiry: t })}
                 />
                 <UploadChip
-                  label="O-licence PDF (simulate)"
+                  label="O-licence PDF"
                   value={p.oLicenceScan}
+                  uploading={uploadingField === "oLicenceScan"}
                   onPick={() =>
-                    patch({
-                      oLicenceScan: mockFile(
-                        "operator-licence.pdf",
-                        "application/pdf",
-                      ),
-                    })
+                    void handleUpload("oLicenceScan", "operator-licence.pdf", "application/pdf")
                   }
                 />
               </>
             ) : null}
           </>
         );
-      case 4:
+      case 3:
         return (
           <>
             <RLField
@@ -424,7 +516,7 @@ export function OperatorOnboardingScreen() {
             />
           </>
         );
-      case 5:
+      case 4:
         return (
           <>
             <Text style={styles.hint}>
@@ -454,7 +546,7 @@ export function OperatorOnboardingScreen() {
             />
           </>
         );
-      case 6:
+      case 5:
       default:
         return (
           <>
@@ -496,6 +588,9 @@ export function OperatorOnboardingScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={[styles.topBar, { paddingTop: insets.top + space.sm }]}>
+        <Pressable onPress={handleBack} hitSlop={12} style={styles.headerBack}>
+          <Text style={styles.back}>Back</Text>
+        </Pressable>
         <View style={styles.modeRibbon}>
           <Text style={styles.modeRibbonText}>RESCUELINK · DRIVER onboarding</Text>
           <Text style={styles.modeRibbonSub}>
@@ -525,11 +620,7 @@ export function OperatorOnboardingScreen() {
           { paddingBottom: insets.bottom + space.md },
         ]}
       >
-        {step > 0 ? (
-          <RLButton label="Back" variant="ghost" onPress={back} />
-        ) : (
-          <View style={{ height: 48 }} />
-        )}
+        <RLButton label="Back" variant="ghost" onPress={handleBack} />
         {step < TOTAL_STEPS - 1 ? (
           <RLButton label="Next step" onPress={next} style={styles.footerBtn} />
         ) : (
@@ -540,6 +631,11 @@ export function OperatorOnboardingScreen() {
           />
         )}
       </View>
+
+      <DevPageBadge
+        {...DEV_PAGES.operatorOnboarding}
+        suffix={`step ${step + 1}/${TOTAL_STEPS}`}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -547,6 +643,8 @@ export function OperatorOnboardingScreen() {
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
   topBar: { paddingHorizontal: space.xl, paddingBottom: space.sm },
+  headerBack: { alignSelf: "flex-start", marginBottom: space.sm },
+  back: { color: colors.orange, fontWeight: "700", fontSize: 16 },
   modeRibbon: {
     backgroundColor: colors.surface2,
     borderRadius: radii.md,
@@ -608,6 +706,68 @@ const styles = StyleSheet.create({
   },
   uploadLabel: { color: colors.white, fontWeight: "700", marginBottom: 4 },
   uploadHint: { color: colors.textMuted, fontSize: 13 },
+
+  // ── Category picker ──
+  catCard: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    padding: space.md,
+    marginBottom: space.md,
+  },
+  catCardLabel: {
+    color: colors.textFaint,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    marginBottom: space.sm,
+  },
+  catChipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: space.sm,
+    marginBottom: space.sm,
+  },
+  catChip: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  catChipOn: {
+    borderColor: colors.orange,
+    backgroundColor: colors.orange,
+  },
+  catChipText: { color: colors.textMuted, fontWeight: "700", fontSize: 12 },
+  catChipTextOn: { color: colors.white },
+  catHint: {
+    color: colors.textFaint,
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: space.sm,
+  },
+  catDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginBottom: space.sm,
+  },
+  catOtherLabel: {
+    color: colors.textFaint,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  catOtherInput: {
+    color: colors.text,
+    fontSize: 15,
+    paddingVertical: 4,
+  },
   roleRow: { flexDirection: "row", gap: space.sm, marginBottom: space.lg },
   roleChip: {
     flex: 1,

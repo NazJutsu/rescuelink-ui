@@ -1,4 +1,4 @@
-import type { ActiveJob } from "./types";
+import type { ActiveJob } from "../types";
 
 /** Ephemeral active job for live tracking (mock). */
 export function buildMockActiveJob(input: {

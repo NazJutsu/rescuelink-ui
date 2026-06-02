@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import {
+  Alert,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
@@ -13,12 +14,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RLButton, RLSectionLabel } from "../../components/ui";
-import { useApp } from "../../context/AppContext";
-import { ISSUE_OPTIONS, MOCK_PICKUP_LABEL } from "../../mock/customerSeed";
-import { buildMockQuote } from "../../mock/quote";
-import { buildMockActiveJob } from "../../mock/activeJob";
+import { useApp } from "../../state/AppContext";
+import { ISSUE_OPTIONS, MOCK_PICKUP_LABEL } from "../../data/customerSeed";
+import { buildMockQuote } from "../../data/quote";
+import { buildMockActiveJob } from "../../data/activeJob";
 import type { CombinedStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
+import { isFirebaseConfigured } from "../../firebase/config";
+import { createJob } from "../../firebase/jobService";
 
 const SCROLLBAR_TRACK_W = 4;
 const SCROLLBAR_GAP = 8;
@@ -29,7 +32,8 @@ export function BookingFlowScreen() {
   const navigation =
     useNavigation<NativeStackNavigationProp<CombinedStackParamList>>();
   const route = useRoute<RouteProp<CombinedStackParamList, "BookingFlow">>();
-  const { vehicles, beginActiveJob } = useApp();
+  const { user, vehicles, beginActiveJob } = useApp();
+  const [submitting, setSubmitting] = useState(false);
 
   const pickupDisplay =
     route.params?.pickupLabel?.trim() || MOCK_PICKUP_LABEL;
@@ -78,18 +82,41 @@ export function BookingFlowScreen() {
     [canMove, roadMiles, onMotorway],
   );
 
-  const submit = () => {
-    beginActiveJob(
-      buildMockActiveJob({
-        jobId: `live_${Date.now()}`,
-        quoteTotal: quote.totalGbp,
-        issueLabel,
-        vehicleLabel,
-        pickupLat,
-        pickupLng,
-      }),
-    );
-    navigation.replace("LiveTracking");
+  const submit = async () => {
+    if (isFirebaseConfigured() && user) {
+      setSubmitting(true);
+      try {
+        const jobId = await createJob({
+          customerId: user.id,
+          customerName: user.firstName,
+          vehicleLabel,
+          issueLabel,
+          canMove,
+          pickupLat: typeof pickupLat === "number" ? pickupLat : 51.5245,
+          pickupLng: typeof pickupLng === "number" ? pickupLng : -0.0772,
+          pickupLabel: pickupDisplay,
+          dropoffLabel: dropoffFromHome,
+          totalGbp: quote.totalGbp,
+        });
+        navigation.replace("LiveTracking", { jobId });
+      } catch {
+        Alert.alert("Error", "Could not create job. Please try again.");
+      } finally {
+        setSubmitting(false);
+      }
+    } else {
+      beginActiveJob(
+        buildMockActiveJob({
+          jobId: `live_${Date.now()}`,
+          quoteTotal: quote.totalGbp,
+          issueLabel,
+          vehicleLabel,
+          pickupLat,
+          pickupLng,
+        }),
+      );
+      navigation.replace("LiveTracking");
+    }
   };
 
   const maxScroll = Math.max(0, contentHeight - viewportHeight);
@@ -275,7 +302,7 @@ export function BookingFlowScreen() {
           <Text style={styles.paySub}>Visa •••• 4242</Text>
         </Pressable>
 
-        <RLButton label="Confirm & start tracking" onPress={submit} style={styles.cta} />
+        <RLButton label="Confirm & start tracking" onPress={submit} style={styles.cta} loading={submitting} />
         </ScrollView>
 
         {showScrollbar ? (

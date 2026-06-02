@@ -10,32 +10,63 @@ import {
 } from "react-native";
 import MapView, { Marker, Polyline } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RLButton } from "../../components/ui";
-import { buildMockActiveJob } from "../../mock/activeJob";
-import { useApp } from "../../context/AppContext";
+import { buildMockActiveJob } from "../../data/activeJob";
+import { useApp } from "../../state/AppContext";
 import type { CombinedStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
+import { isFirebaseConfigured } from "../../firebase/config";
+import { subscribeToJob, updateJobStatus } from "../../firebase/jobService";
+import type { JobDoc } from "../../firebase/jobService";
+import type { ActiveJob } from "../../types";
 
 const MOCK_TICKETS = 40;
 const MOCK_TICK_MS = 800;
 
-/** Linear interpolation helper for demo driver path (straight-line approximation). */
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
+}
+
+/** Maps a Firestore job doc to the ActiveJob shape used by the existing map UI. */
+function jobDocToActiveJob(job: JobDoc): ActiveJob {
+  const driverLat = job.driverLat ?? (job.pickupLat + 0.006);
+  const driverLng = job.driverLng ?? (job.pickupLng - 0.013);
+  return {
+    id: job.id,
+    customerName: job.customerName,
+    operatorName: job.driverName ?? "Finding operator…",
+    operatorRating: 4.9,
+    vehicleLabel: job.vehicleLabel,
+    issueLabel: job.issueLabel,
+    totalGbp: job.totalGbp,
+    etaMinutes: 6,
+    status: job.status,
+    pickupLat: job.pickupLat,
+    pickupLng: job.pickupLng,
+    driverLat,
+    driverLng,
+  };
 }
 
 export function LiveTrackingScreen() {
   const insets = useSafeAreaInsets();
   const navigation =
     useNavigation<NativeStackNavigationProp<CombinedStackParamList>>();
+  const route = useRoute<RouteProp<CombinedStackParamList, "LiveTracking">>();
+  const jobId = route.params?.jobId;
+
   const {
     activeJob,
     beginActiveJob,
     clearActiveJob,
     completeActiveJob,
   } = useApp();
+
+  // Firebase-backed job state (overrides activeJob when configured)
+  const [firestoreJob, setFirestoreJob] = useState<JobDoc | null>(null);
+
   const mapRef = useRef<MapView>(null);
   const [driverLat, setDriverLat] = useState(activeJob?.driverLat ?? 51.53);
   const [driverLng, setDriverLng] = useState(activeJob?.driverLng ?? -0.09);
@@ -43,27 +74,53 @@ export function LiveTrackingScreen() {
   const [progressT, setProgressT] = useState(0);
   const tick = useRef(0);
 
+  // ── Firestore subscription (Firebase path) ─────────────────────────────
   useEffect(() => {
-    if (!activeJob) return;
+    if (!isFirebaseConfigured() || !jobId) return;
+
+    const unsub = subscribeToJob(jobId, (job) => {
+      setFirestoreJob(job);
+      if (job?.status === "completed") {
+        // Auto-navigate when driver marks job complete
+        completeActiveJob({
+          id: job.id,
+          createdAt: new Date().toISOString(),
+          status: "completed",
+          operatorName: job.driverName ?? "Operator",
+          amountGbp: job.totalGbp,
+          pickupLabel: job.pickupLabel,
+          vehicleReg: job.vehicleLabel.split("·").pop()?.trim() ?? "—",
+        });
+        clearActiveJob();
+        navigation.navigate("MainTabs", { screen: "JobHistory" });
+      }
+    });
+
+    return unsub;
+  }, [jobId, completeActiveJob, clearActiveJob, navigation]);
+
+  // Resolve which job to display — prefer Firestore job when available
+  const displayJob: ActiveJob | null = firestoreJob
+    ? jobDocToActiveJob(firestoreJob)
+    : activeJob;
+
+  // ── Mock GPS animation (runs when displayJob is set) ───────────────────
+  useEffect(() => {
+    if (!displayJob) return;
     tick.current = 0;
-    setDriverLat(activeJob.driverLat);
-    setDriverLng(activeJob.driverLng);
-    setEta(activeJob.etaMinutes);
+    setDriverLat(displayJob.driverLat);
+    setDriverLng(displayJob.driverLng);
+    setEta(displayJob.etaMinutes);
     setProgressT(0);
 
     const initialFit = () => {
       mapRef.current?.fitToCoordinates(
         [
-          { latitude: activeJob.driverLat, longitude: activeJob.driverLng },
-          { latitude: activeJob.pickupLat, longitude: activeJob.pickupLng },
+          { latitude: displayJob.driverLat, longitude: displayJob.driverLng },
+          { latitude: displayJob.pickupLat, longitude: displayJob.pickupLng },
         ],
         {
-          edgePadding: {
-            top: insets.top + 100,
-            right: 44,
-            bottom: 260,
-            left: 44,
-          },
+          edgePadding: { top: insets.top + 100, right: 44, bottom: 260, left: 44 },
           animated: false,
         },
       );
@@ -74,29 +131,21 @@ export function LiveTrackingScreen() {
       tick.current += 1;
       const t = Math.min(1, tick.current / MOCK_TICKETS);
       setProgressT(t);
-      setDriverLat(lerp(activeJob.driverLat, activeJob.pickupLat, t));
-      setDriverLng(lerp(activeJob.driverLng, activeJob.pickupLng, t));
-      setEta(Math.max(1, Math.round(activeJob.etaMinutes * (1 - t))));
+      setDriverLat(lerp(displayJob.driverLat, displayJob.pickupLat, t));
+      setDriverLng(lerp(displayJob.driverLng, displayJob.pickupLng, t));
+      setEta(Math.max(1, Math.round(displayJob.etaMinutes * (1 - t))));
 
       if (tick.current % 4 === 0) {
         mapRef.current?.fitToCoordinates(
           [
             {
-              latitude: lerp(activeJob.driverLat, activeJob.pickupLat, t),
-              longitude: lerp(activeJob.driverLng, activeJob.pickupLng, t),
+              latitude: lerp(displayJob.driverLat, displayJob.pickupLat, t),
+              longitude: lerp(displayJob.driverLng, displayJob.pickupLng, t),
             },
-            {
-              latitude: activeJob.pickupLat,
-              longitude: activeJob.pickupLng,
-            },
+            { latitude: displayJob.pickupLat, longitude: displayJob.pickupLng },
           ],
           {
-            edgePadding: {
-              top: insets.top + 100,
-              right: 44,
-              bottom: 260,
-              left: 44,
-            },
+            edgePadding: { top: insets.top + 100, right: 44, bottom: 260, left: 44 },
             animated: true,
           },
         );
@@ -104,7 +153,7 @@ export function LiveTrackingScreen() {
     }, MOCK_TICK_MS);
 
     return () => clearInterval(id);
-  }, [activeJob, insets.top]);
+  }, [displayJob, insets.top]);
 
   const startTrackingDemo = () => {
     beginActiveJob(
@@ -117,61 +166,77 @@ export function LiveTrackingScreen() {
     );
   };
 
-  if (!activeJob) {
+  if (!displayJob) {
     return (
       <View style={[styles.empty, { paddingTop: insets.top }]}>
         <Text style={styles.emptyText}>
-          Nothing is being tracked right now — this screen is wired for demos with a fake GPS path
-          (straight line toward pickup, no backend).
+          {isFirebaseConfigured() && jobId
+            ? "Loading job details…"
+            : "Nothing is being tracked right now — this screen is wired for demos with a fake GPS path (straight line toward pickup, no backend)."}
         </Text>
-        <RLButton label="Run live tracking demo" onPress={startTrackingDemo} />
-        <View style={{ height: space.md }} />
-        <Pressable onPress={() => navigation.navigate("MainTabs")} hitSlop={12}>
-          <Text style={styles.linkBack}>Back to home</Text>
-        </Pressable>
+        {!isFirebaseConfigured() || !jobId ? (
+          <>
+            <RLButton label="Run live tracking demo" onPress={startTrackingDemo} />
+            <View style={{ height: space.md }} />
+            <Pressable onPress={() => navigation.navigate("MainTabs")} hitSlop={12}>
+              <Text style={styles.linkBack}>Back to home</Text>
+            </Pressable>
+          </>
+        ) : null}
       </View>
     );
   }
 
   const markComplete = () => {
-    completeActiveJob({
-      id: activeJob.id,
-      createdAt: new Date().toISOString(),
-      status: "completed",
-      operatorName: activeJob.operatorName,
-      amountGbp: activeJob.totalGbp,
-      pickupLabel: "Shoreditch area (mock)",
-      vehicleReg: activeJob.vehicleLabel.split("·").pop()?.trim() ?? "—",
-    });
-    clearActiveJob();
-    navigation.navigate("MainTabs", { screen: "JobHistory" });
+    if (isFirebaseConfigured() && jobId) {
+      void updateJobStatus(jobId, "completed");
+      // Firestore subscription handles navigation
+    } else {
+      completeActiveJob({
+        id: displayJob.id,
+        createdAt: new Date().toISOString(),
+        status: "completed",
+        operatorName: displayJob.operatorName,
+        amountGbp: displayJob.totalGbp,
+        pickupLabel: "Shoreditch area (mock)",
+        vehicleReg: displayJob.vehicleLabel.split("·").pop()?.trim() ?? "—",
+      });
+      clearActiveJob();
+      navigation.navigate("MainTabs", { screen: "JobHistory" });
+    }
   };
 
   const initialRegion = {
-    latitude: (activeJob.driverLat + activeJob.pickupLat) / 2,
-    longitude: (activeJob.driverLng + activeJob.pickupLng) / 2,
+    latitude: (displayJob.driverLat + displayJob.pickupLat) / 2,
+    longitude: (displayJob.driverLng + displayJob.pickupLng) / 2,
     latitudeDelta: 0.05,
     longitudeDelta: 0.05,
   };
 
   const routeLine = [
-    { latitude: activeJob.driverLat, longitude: activeJob.driverLng },
-    { latitude: activeJob.pickupLat, longitude: activeJob.pickupLng },
+    { latitude: displayJob.driverLat, longitude: displayJob.driverLng },
+    { latitude: displayJob.pickupLat, longitude: displayJob.pickupLng },
   ];
   const routeSoFar =
     progressT >= 1
       ? routeLine
       : [
-          { latitude: activeJob.driverLat, longitude: activeJob.driverLng },
+          { latitude: displayJob.driverLat, longitude: displayJob.driverLng },
           { latitude: driverLat, longitude: driverLng },
         ];
 
+  const firestoreStatus = firestoreJob?.status;
   const statusTitle =
-    progressT >= 0.96
-      ? "Almost at pickup point"
-      : activeJob.status === "en_route"
+    firestoreStatus === "arrived"
+      ? "Operator has arrived"
+      : firestoreStatus === "en_route" || progressT < 0.96
         ? "Operator en route"
-        : "Job update";
+        : "Almost at pickup point";
+
+  const etaLabel =
+    firestoreStatus === "arrived"
+      ? "Arrived at your location"
+      : `ETA ~${eta} min`;
 
   return (
     <View style={styles.flex}>
@@ -188,30 +253,30 @@ export function LiveTrackingScreen() {
           strokeWidth={3}
         />
         <Marker
-          coordinate={{ latitude: activeJob.pickupLat, longitude: activeJob.pickupLng }}
+          coordinate={{ latitude: displayJob.pickupLat, longitude: displayJob.pickupLng }}
           title="Pickup"
           pinColor={colors.green}
         />
         <Marker
           coordinate={{ latitude: driverLat, longitude: driverLng }}
-          title={activeJob.operatorName}
-          description="Recovery truck (mock GPS)"
+          title={displayJob.operatorName}
+          description={isFirebaseConfigured() ? "Recovery operator" : "Recovery truck (mock GPS)"}
           pinColor={colors.orange}
         />
       </MapView>
 
       <View style={[styles.banner, { top: insets.top + space.sm }]}>
         <Text style={styles.bannerText}>{statusTitle}</Text>
-        <Text style={styles.bannerEta}>
-          ETA ~{eta} min · Demo path (straight line, no server)
-        </Text>
+        <Text style={styles.bannerEta}>{etaLabel}</Text>
       </View>
 
       <View style={[styles.sheet, { paddingBottom: insets.bottom + space.lg }]}>
-        <Text style={styles.driverName}>{activeJob.operatorName}</Text>
-        <Text style={styles.rating}>★ {activeJob.operatorRating.toFixed(1)} · RescueLink Pro</Text>
-        <Text style={styles.meta}>{activeJob.vehicleLabel}</Text>
-        <Text style={styles.issue}>{activeJob.issueLabel}</Text>
+        <Text style={styles.driverName}>{displayJob.operatorName}</Text>
+        <Text style={styles.rating}>
+          ★ {displayJob.operatorRating.toFixed(1)} · RescueLink Pro
+        </Text>
+        <Text style={styles.meta}>{displayJob.vehicleLabel}</Text>
+        <Text style={styles.issue}>{displayJob.issueLabel}</Text>
 
         <View style={styles.actions}>
           <Pressable
@@ -222,23 +287,20 @@ export function LiveTrackingScreen() {
           </Pressable>
           <Pressable
             style={styles.iconBtn}
-            onPress={() => Alert.alert("Messages", "In-app chat is mock-only for now.")}
+            onPress={() => Alert.alert("Messages", "In-app chat coming soon.")}
           >
             <Text style={styles.iconBtnText}>Message</Text>
           </Pressable>
         </View>
 
         <RLButton
-          label="Mark job complete (demo)"
+          label="Mark job complete"
           onPress={markComplete}
           style={{ marginTop: space.md }}
         />
         <Pressable
           onPress={() =>
-            Alert.alert(
-              "Cancel job",
-              "Mock flow — cancellation policy would live here.",
-            )
+            Alert.alert("Cancel job", "Cancellation policy will be shown here.")
           }
         >
           <Text style={styles.cancel}>Cancel job</Text>
@@ -292,7 +354,12 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: space.lg,
   },
-  empty: { flex: 1, backgroundColor: colors.bg, padding: space.xl, justifyContent: "center" },
+  empty: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    padding: space.xl,
+    justifyContent: "center",
+  },
   emptyText: {
     color: colors.textMuted,
     marginBottom: space.lg,

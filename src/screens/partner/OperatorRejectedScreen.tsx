@@ -3,8 +3,9 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { RLButton } from "../../components/ui";
-import { useApp } from "../../context/AppContext";
+import { useApp } from "../../state/AppContext";
 import type { CombinedStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
 
@@ -22,11 +23,16 @@ export function OperatorRejectedScreen() {
     <ScrollView
       style={styles.flex}
       contentContainerStyle={{
-        paddingTop: insets.top + space.xl,
+        paddingTop: insets.top + space.md,
         paddingHorizontal: space.xl,
         paddingBottom: insets.bottom + space.xl,
       }}
     >
+      <Pressable style={styles.backBtn} onPress={() => navigation.goBack()} hitSlop={12}>
+        <Ionicons name="chevron-back" size={22} color={colors.text} />
+        <Text style={styles.backTxt}>Back</Text>
+      </Pressable>
+
       <Text style={styles.title}>Application not approved</Text>
       <Text style={styles.sub}>
         You can revise your licences, insurer PDFs, O-licence evidence, and payout
@@ -54,6 +60,13 @@ export function OperatorRejectedScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
+  backBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginBottom: space.md,
+  },
+  backTxt: { color: colors.text, fontWeight: "700", fontSize: 16 },
   title: {
     color: colors.white,
     fontSize: 26,

@@ -1,4 +1,4 @@
-import type { OperatorProfile } from "./types";
+import type { OperatorProfile } from "../types";
 
 export function createEmptyOperatorProfile(): OperatorProfile {
   return {
@@ -117,7 +117,7 @@ export function approvedOperatorSampleProfile(): OperatorProfile {
     payoutAccountLast4: "9012",
     yearsExperience: "8",
     confirmAccuracy: true,
-    onboardingStepIndex: 8,
+    onboardingStepIndex: 5,
     submittedAt: now,
     licenceFront: {
       fileName: "demo-licence-front.jpg",

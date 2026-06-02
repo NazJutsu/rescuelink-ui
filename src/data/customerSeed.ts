@@ -1,4 +1,4 @@
-import type { OperatorPin, PastJob, Vehicle } from "./types";
+import type { OperatorPin, PastJob, Vehicle } from "../types";
 
 export const MOCK_PICKUP_LABEL = "Near Shoreditch High St, London";
 export const MOCK_DROPOFF_LABEL = "Halfords Autocentre, Islington (optional)";

@@ -8,20 +8,34 @@ import React, {
   useRef,
   useState,
 } from "react";
-import type { ActiveJob, OperatorProfile, PastJob, User, Vehicle } from "../mock/types";
-import { isOperatorProfileSubmittable } from "../mock/operatorProfile";
+import type { ActiveJob, OperatorProfile, PastJob, User, Vehicle } from "../types";
+import { isOperatorProfileSubmittable } from "../data/operatorProfile";
 import {
   appReducer,
   createInitialAppState,
   type AppState,
-} from "../appState/reducer";
+} from "./reducer";
 import {
   clearPersistedSlice,
   loadPersistedSlice,
   savePersistedSlice,
-} from "../persistence/appStateStorage";
+} from "./storage";
 import { colors } from "../theme/tokens";
 import { StyleSheet, View } from "react-native";
+import { isFirebaseConfigured } from "../firebase/config";
+import {
+  firebaseSignIn,
+  firebaseSignUp,
+  firebaseSignOut,
+  subscribeAuthState,
+} from "../firebase/authService";
+import {
+  createUserDoc,
+  getUserDoc,
+  createOperatorDoc,
+  getOperatorDoc,
+  saveOperatorDoc,
+} from "../firebase/userService";
 
 type AppContextValue = {
   user: User | null;
@@ -29,8 +43,10 @@ type AppContextValue = {
   jobs: PastJob[];
   activeJob: ActiveJob | null;
   operatorProfile: OperatorProfile | null;
-  login: (email: string, _password?: string) => void;
-  register: (u: Omit<User, "id">) => void;
+  /** Signs in with email + password. Throws on failure (catch for error message). */
+  login: (email: string, password: string) => Promise<void>;
+  /** Creates a new account. Throws on failure (catch for error message). */
+  register: (u: Omit<User, "id">, password: string) => Promise<void>;
   logout: () => void;
   setVehicles: React.Dispatch<React.SetStateAction<Vehicle[]>>;
   addJob: (job: PastJob) => void;
@@ -59,8 +75,13 @@ function toPersistedSlice(s: AppState) {
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, undefined, createInitialAppState);
   const [hydrated, setHydrated] = useState(false);
+  // authReady becomes true once the first onAuthStateChanged fires (or immediately when
+  // Firebase is not configured, so the blank-screen gate doesn't block the mock flow).
+  const [authReady, setAuthReady] = useState(!isFirebaseConfigured());
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncProfileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ── Hydrate from AsyncStorage ────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -76,6 +97,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // ── Persist state to AsyncStorage (debounced) ────────────────────────────
   const persistSlice = useMemo(() => toPersistedSlice(state), [state]);
 
   useEffect(() => {
@@ -93,25 +115,105 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, [hydrated, persistSlice]);
 
-  const login = useCallback((email: string) => {
-    const e = email.trim().toLowerCase();
-    if (e.includes("operator")) {
-      dispatch({ type: "LOGIN_OPERATOR_APPROVED", email });
+  // ── Firebase auth state listener ─────────────────────────────────────────
+  useEffect(() => {
+    if (!isFirebaseConfigured()) return;
+
+    const unsubscribe = subscribeAuthState(async (fbUser) => {
+      if (fbUser == null) {
+        dispatch({ type: "LOGOUT" });
+        setAuthReady(true);
+        return;
+      }
+
+      try {
+        const user = await getUserDoc(fbUser.uid);
+        if (!user) {
+          // Auth record exists but Firestore doc is missing — sign out cleanly
+          await firebaseSignOut();
+          dispatch({ type: "LOGOUT" });
+          setAuthReady(true);
+          return;
+        }
+
+        let operatorProfile: OperatorProfile | null = null;
+        if (user.role === "operator") {
+          operatorProfile =
+            (await getOperatorDoc(fbUser.uid)) ??
+            (await createOperatorDoc(fbUser.uid));
+        }
+
+        dispatch({ type: "AUTH_SET_USER", user, operatorProfile });
+      } catch {
+        dispatch({ type: "LOGOUT" });
+      } finally {
+        setAuthReady(true);
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
+  // ── Sync operator profile to Firestore (debounced, Firebase path only) ───
+  useEffect(() => {
+    if (!isFirebaseConfigured() || !hydrated || !authReady) return;
+    if (!state.user || state.user.role !== "operator" || !state.operatorProfile) return;
+
+    const uid = state.user.id;
+    const profile = state.operatorProfile;
+
+    if (syncProfileTimer.current) clearTimeout(syncProfileTimer.current);
+    syncProfileTimer.current = setTimeout(() => {
+      void saveOperatorDoc(uid, profile);
+    }, 800);
+
+    return () => {
+      if (syncProfileTimer.current) clearTimeout(syncProfileTimer.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.operatorProfile]);
+
+  // ── Auth actions ─────────────────────────────────────────────────────────
+  const login = useCallback(async (email: string, password: string): Promise<void> => {
+    if (isFirebaseConfigured()) {
+      await firebaseSignIn(email, password);
+      // onAuthStateChanged handles state update
     } else {
-      dispatch({ type: "LOGIN_CUSTOMER", email });
+      const e = email.trim().toLowerCase();
+      if (e.includes("operator")) {
+        dispatch({ type: "LOGIN_OPERATOR_APPROVED", email });
+      } else {
+        dispatch({ type: "LOGIN_CUSTOMER", email });
+      }
     }
   }, []);
 
-  const register = useCallback((u: Omit<User, "id">) => {
-    const id = `u_${Date.now()}`;
-    dispatch({ type: "REGISTER", user: u, id });
-  }, []);
+  const register = useCallback(
+    async (u: Omit<User, "id">, password: string): Promise<void> => {
+      if (isFirebaseConfigured()) {
+        const fbUser = await firebaseSignUp(u.email, password);
+        await createUserDoc(fbUser.uid, u);
+        if (u.role === "operator") {
+          await createOperatorDoc(fbUser.uid);
+        }
+        // onAuthStateChanged handles state update
+      } else {
+        const id = `u_${Date.now()}`;
+        dispatch({ type: "REGISTER", user: u, id });
+      }
+    },
+    [],
+  );
 
   const logout = useCallback(() => {
-    void clearPersistedSlice();
     dispatch({ type: "LOGOUT" });
+    void clearPersistedSlice();
+    if (isFirebaseConfigured()) {
+      void firebaseSignOut();
+    }
   }, []);
 
+  // ── Other actions (unchanged) ─────────────────────────────────────────────
   const setVehicles = useCallback(
     (action: React.SetStateAction<Vehicle[]>) => {
       dispatch({
@@ -218,7 +320,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     ],
   );
 
-  if (!hydrated) {
+  if (!hydrated || !authReady) {
     return <View style={styles.hydrate} />;
   }
 

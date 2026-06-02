@@ -10,3 +10,6 @@ npm-debug.*
 *.orig.*
 web-build/
 .DS_Store
+
+# Local environment — never commit real API keys
+.env

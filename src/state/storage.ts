@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { createEmptyOperatorProfile } from "../mock/operatorProfile";
-import type { OperatorProfile, User, Vehicle, PastJob } from "../mock/types";
+import { createEmptyOperatorProfile } from "../data/operatorProfile";
+import type { OperatorProfile, User, Vehicle, PastJob } from "../types";
 
 export const PERSISTENCE_KEY = "rescuelink_app_state_v1";
 

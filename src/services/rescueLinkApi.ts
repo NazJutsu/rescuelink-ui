@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
-import type { ActiveJob, OperatorProfile, PastJob, User, Vehicle } from "../mock/types";
+import type { ActiveJob, OperatorProfile, PastJob, User, Vehicle } from "../types";
 
 export type RegisterInput = Omit<User, "id">;
 

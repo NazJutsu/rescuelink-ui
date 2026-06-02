@@ -1,4 +1,4 @@
-import type { QuoteBreakdown } from "./types";
+import type { QuoteBreakdown } from "../types";
 
 const VAT_RATE = 0.2;
 

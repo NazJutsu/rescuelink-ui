@@ -29,17 +29,17 @@ import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { RLButton } from "../../components/ui";
-import { useApp } from "../../context/AppContext";
+import { useApp } from "../../state/AppContext";
 import {
   ADDRESS_DROPOFF_PLACEHOLDER,
   ADDRESS_PICKUP_PLACEHOLDER,
   MAP_CENTER,
   nearbyOperators,
-} from "../../mock/customerSeed";
+} from "../../data/customerSeed";
 import {
   seedNotifications,
   unreadNotificationsCount,
-} from "../../mock/notificationsSeed";
+} from "../../data/notificationsSeed";
 import type { CombinedStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
 import {

@@ -1,9 +1,9 @@
 import {
   approvedOperatorSampleProfile,
   createEmptyOperatorProfile,
-} from "../mock/operatorProfile";
-import { seedJobHistory, seedVehicles } from "../mock/customerSeed";
-import type { ActiveJob, OperatorProfile, PastJob, User, Vehicle } from "../mock/types";
+} from "../data/operatorProfile";
+import { seedJobHistory, seedVehicles } from "../data/customerSeed";
+import type { ActiveJob, OperatorProfile, PastJob, User, Vehicle } from "../types";
 
 export type AppState = {
   user: User | null;
@@ -18,6 +18,7 @@ export type AppAction =
       type: "HYDRATE";
       payload: Partial<Pick<AppState, "user" | "vehicles" | "jobs" | "operatorProfile">>;
     }
+  | { type: "AUTH_SET_USER"; user: User; operatorProfile: OperatorProfile | null }
   | { type: "LOGIN_CUSTOMER"; email: string }
   | { type: "LOGIN_OPERATOR_APPROVED"; email: string }
   | { type: "REGISTER"; user: Omit<User, "id">; id: string }
@@ -50,6 +51,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         ...action.payload,
+        activeJob: null,
+      };
+    case "AUTH_SET_USER":
+      return {
+        ...state,
+        user: action.user,
+        operatorProfile: action.operatorProfile,
         activeJob: null,
       };
     case "LOGIN_CUSTOMER":
@@ -128,7 +136,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         operatorProfile: {
           ...state.operatorProfile,
-          onboardingStepIndex: Math.max(0, action.step),
+          onboardingStepIndex: Math.min(Math.max(0, action.step), 5),
         },
       };
     }

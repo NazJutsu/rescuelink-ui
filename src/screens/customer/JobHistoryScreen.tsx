@@ -1,9 +1,9 @@
 import React from "react";
 import { Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useApp } from "../../context/AppContext";
+import { useApp } from "../../state/AppContext";
 import { colors, radii, space } from "../../theme/tokens";
-import type { PastJob } from "../../mock/types";
+import type { PastJob } from "../../types";
 
 function formatDate(iso: string) {
   try {

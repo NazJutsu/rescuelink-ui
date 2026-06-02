@@ -3,7 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { seedNotifications } from "../../mock/notificationsSeed";
+import { seedNotifications } from "../../data/notificationsSeed";
 import type { RootStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
 

@@ -27,7 +27,8 @@
         {
           "locationWhenInUsePermission": "RescueLink uses your location when you tap Current location to fill your pickup address."
         }
-      ]
+      ],
+      "expo-font"
     ]
   }
 }

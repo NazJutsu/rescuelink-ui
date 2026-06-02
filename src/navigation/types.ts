@@ -11,6 +11,7 @@ export type CustomerTabParamList = {
 
 /** Single navigator param list covering auth / customer / operator stacks. */
 export type CombinedStackParamList = {
+  Landing: undefined;
   Login: undefined;
   Register: undefined;
   Legal: { kind: LegalKind };
@@ -28,13 +29,13 @@ export type CombinedStackParamList = {
         dropoffLng?: number;
       }
     | undefined;
-  LiveTracking: undefined;
+  LiveTracking: { jobId?: string } | undefined;
   Notifications: undefined;
   OperatorOnboarding: undefined;
   OperatorPending: undefined;
   OperatorRejected: undefined;
   OperatorTabs: undefined;
-  OperatorLiveJob: undefined;
+  OperatorLiveJob: { jobId?: string } | undefined;
 };
 
 export type RootStackParamList = CombinedStackParamList;
