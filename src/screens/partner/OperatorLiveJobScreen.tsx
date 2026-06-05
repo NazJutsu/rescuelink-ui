@@ -15,7 +15,9 @@ import { RLButton } from "../../components/ui";
 import type { CombinedStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
 import { isFirebaseConfigured } from "../../firebase/config";
-import { subscribeToJob, updateJobStatus, type JobDoc } from "../../firebase/jobService";
+import { subscribeToJob, type JobDoc } from "../../firebase/jobService";
+import { callUpdateJobStatus } from "../../firebase/functionsService";
+import { startDriverLocationBroadcast } from "../../services/driverLocation";
 
 export function OperatorLiveJobScreen() {
   const insets = useSafeAreaInsets();
@@ -40,11 +42,26 @@ export function OperatorLiveJobScreen() {
     return unsub;
   }, [jobId, navigation]);
 
+  // ── Broadcast live GPS while job is active ──
+  useEffect(() => {
+    if (!isFirebaseConfigured() || !jobId || !job) return;
+    if (job.status === "completed" || job.status === "cancelled") return;
+
+    let stop: (() => void) | undefined;
+    void startDriverLocationBroadcast(jobId).then((cleanup) => {
+      stop = cleanup;
+    });
+
+    return () => stop?.();
+  }, [jobId, job?.status]);
+
   const handleStatusUpdate = async (status: "arrived" | "completed") => {
     if (!jobId) return;
     setUpdating(true);
     try {
-      await updateJobStatus(jobId, status);
+      if (isFirebaseConfigured()) {
+        await callUpdateJobStatus(jobId, status);
+      }
     } catch {
       Alert.alert("Error", "Could not update job status. Try again.");
     } finally {

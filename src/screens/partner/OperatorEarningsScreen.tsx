@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
@@ -7,23 +7,52 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import type { CombinedStackParamList } from "../../navigation/types";
 import { useApp } from "../../state/AppContext";
 import { colors, radii, space } from "../../theme/tokens";
+import { isFirebaseConfigured } from "../../firebase/config";
+import {
+  earningsByDayThisWeek,
+  sumCompletedToday,
+} from "../../firebase/jobMappers";
+import { subscribeToDriverCompletedJobs, type JobDoc } from "../../firebase/jobService";
 
 const MOCK_WEEK = [
-  { day: "Mon", amount: "£126.00" },
-  { day: "Tue", amount: "£0.00" },
-  { day: "Wed", amount: "£74.20" },
-  { day: "Thu", amount: "£0.00" },
-  { day: "Fri", amount: "£48.50" },
-  { day: "Sat", amount: "£92.00" },
-  { day: "Sun", amount: "£0.00" },
+  { day: "Mon", amount: 126 },
+  { day: "Tue", amount: 0 },
+  { day: "Wed", amount: 74.2 },
+  { day: "Thu", amount: 0 },
+  { day: "Fri", amount: 48.5 },
+  { day: "Sat", amount: 92 },
+  { day: "Sun", amount: 0 },
 ];
 
 export function OperatorEarningsScreen() {
   const insets = useSafeAreaInsets();
   const navigation =
     useNavigation<NativeStackNavigationProp<CombinedStackParamList>>();
-  const { operatorProfile } = useApp();
+  const { user, operatorProfile } = useApp();
   const isApproved = operatorProfile?.verificationStatus === "approved";
+  const useLiveData = isFirebaseConfigured() && Boolean(user);
+
+  const [completedJobs, setCompletedJobs] = useState<JobDoc[]>([]);
+
+  useEffect(() => {
+    if (!useLiveData || !user || !isApproved) return;
+    return subscribeToDriverCompletedJobs(user.id, setCompletedJobs);
+  }, [useLiveData, user, isApproved]);
+
+  const todayTotal = useMemo(
+    () => (useLiveData ? sumCompletedToday(completedJobs) : 0),
+    [useLiveData, completedJobs],
+  );
+
+  const weekRows = useMemo(() => {
+    if (!useLiveData) return MOCK_WEEK;
+    return earningsByDayThisWeek(completedJobs);
+  }, [useLiveData, completedJobs]);
+
+  const weekTotal = useMemo(
+    () => weekRows.reduce((sum, row) => sum + row.amount, 0),
+    [weekRows],
+  );
 
   return (
     <ScrollView
@@ -37,7 +66,9 @@ export function OperatorEarningsScreen() {
     >
       <Text style={styles.title}>Earnings</Text>
       <Text style={styles.sub}>
-        High-level payout view for recoveries — live totals once billing connects to this tab.
+        {useLiveData
+          ? "Live totals from completed recoveries on your account."
+          : "High-level payout view for recoveries — live totals once billing connects to this tab."}
       </Text>
 
       {!isApproved ? (
@@ -62,20 +93,24 @@ export function OperatorEarningsScreen() {
       ) : (
         <>
           <View style={styles.hero}>
-            <Text style={styles.heroLabel}>Today (mock)</Text>
-            <Text style={styles.heroAmt}>£0.00</Text>
+            <Text style={styles.heroLabel}>{useLiveData ? "Today" : "Today (mock)"}</Text>
+            <Text style={styles.heroAmt}>£{todayTotal.toFixed(2)}</Text>
             <View style={styles.heroRow}>
               <Ionicons name="trending-up" size={18} color={colors.green} />
-              <Text style={styles.heroHint}>Live totals connect when billing is wired.</Text>
+              <Text style={styles.heroHint}>
+                {useLiveData
+                  ? `£${weekTotal.toFixed(2)} completed this week.`
+                  : "Live totals connect when billing is wired."}
+              </Text>
             </View>
           </View>
 
           <Text style={styles.section}>This week</Text>
           <View style={styles.table}>
-            {MOCK_WEEK.map((r) => (
+            {weekRows.map((r) => (
               <View key={r.day} style={styles.tableRow}>
                 <Text style={styles.tableDay}>{r.day}</Text>
-                <Text style={styles.tableAmt}>{r.amount}</Text>
+                <Text style={styles.tableAmt}>£{r.amount.toFixed(2)}</Text>
               </View>
             ))}
           </View>
@@ -84,7 +119,11 @@ export function OperatorEarningsScreen() {
             <Ionicons name="wallet-outline" size={22} color={colors.orange} />
             <View style={{ flex: 1, marginLeft: space.md }}>
               <Text style={styles.payoutTitle}>Next payout</Text>
-              <Text style={styles.payoutSub}>Mock · usually weekly after platform fees</Text>
+              <Text style={styles.payoutSub}>
+                {useLiveData
+                  ? "Weekly payout after platform fees — billing integration coming soon."
+                  : "Mock · usually weekly after platform fees"}
+              </Text>
             </View>
           </View>
         </>

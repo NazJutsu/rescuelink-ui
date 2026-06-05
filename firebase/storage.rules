@@ -1,0 +1,20 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    match /operators/{userId}/{allPaths=**} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /jobs/{jobId}/inspection/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+  }
+}

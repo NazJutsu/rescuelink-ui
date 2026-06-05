@@ -1,9 +1,12 @@
-import React from "react";
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useApp } from "../../state/AppContext";
 import { colors, radii, space } from "../../theme/tokens";
 import type { PastJob } from "../../types";
+import { isFirebaseConfigured } from "../../firebase/config";
+import { jobDocToPastJob } from "../../firebase/jobMappers";
+import { subscribeToCustomerJobs } from "../../firebase/jobService";
 
 function formatDate(iso: string) {
   try {
@@ -22,7 +25,26 @@ function formatDate(iso: string) {
 
 export function JobHistoryScreen() {
   const insets = useSafeAreaInsets();
-  const { jobs } = useApp();
+  const { user, jobs: localJobs } = useApp();
+  const [firestoreJobs, setFirestoreJobs] = useState<PastJob[]>([]);
+  const [loading, setLoading] = useState(isFirebaseConfigured() && Boolean(user));
+
+  useEffect(() => {
+    if (!isFirebaseConfigured() || !user) {
+      setLoading(false);
+      return;
+    }
+
+    const unsub = subscribeToCustomerJobs(user.id, (docs) => {
+      setFirestoreJobs(docs.map(jobDocToPastJob));
+      setLoading(false);
+    });
+
+    return unsub;
+  }, [user]);
+
+  const jobs = isFirebaseConfigured() && user ? firestoreJobs : localJobs;
+  const useLiveData = isFirebaseConfigured() && Boolean(user);
 
   const renderItem = ({ item }: { item: PastJob }) => (
     <View style={styles.card}>
@@ -62,16 +84,22 @@ export function JobHistoryScreen() {
   return (
     <View style={[styles.flex, { paddingTop: insets.top + space.md }]}>
       <Text style={styles.title}>Job history</Text>
-      <Text style={styles.sub}>Past recoveries and payments (mock data).</Text>
-      <FlatList
-        data={jobs}
-        keyExtractor={(j) => j.id}
-        contentContainerStyle={{ padding: space.xl, paddingBottom: insets.bottom + 80 }}
-        ListEmptyComponent={
-          <Text style={styles.empty}>No jobs yet — complete a booking from Home.</Text>
-        }
-        renderItem={renderItem}
-      />
+      <Text style={styles.sub}>
+        {useLiveData ? "Past recoveries from your account." : "Past recoveries and payments (mock data)."}
+      </Text>
+      {loading ? (
+        <ActivityIndicator color={colors.orange} style={{ marginTop: space.xl }} />
+      ) : (
+        <FlatList
+          data={jobs}
+          keyExtractor={(j) => j.id}
+          contentContainerStyle={{ padding: space.xl, paddingBottom: insets.bottom + 80 }}
+          ListEmptyComponent={
+            <Text style={styles.empty}>No jobs yet — complete a booking from Home.</Text>
+          }
+          renderItem={renderItem}
+        />
+      )}
     </View>
   );
 }

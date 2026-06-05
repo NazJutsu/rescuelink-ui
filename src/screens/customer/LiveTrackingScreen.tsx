@@ -21,7 +21,8 @@ import { useApp } from "../../state/AppContext";
 import type { CombinedStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
 import { isFirebaseConfigured } from "../../firebase/config";
-import { subscribeToJob, updateJobStatus, confirmInspection, disputeInspection } from "../../firebase/jobService";
+import { subscribeToJob, confirmInspection, disputeInspection } from "../../firebase/jobService";
+import { callUpdateJobStatus } from "../../firebase/functionsService";
 import type { JobDoc } from "../../firebase/jobService";
 import type { ActiveJob } from "../../types";
 
@@ -107,9 +108,18 @@ export function LiveTrackingScreen() {
     ? jobDocToActiveJob(firestoreJob)
     : activeJob;
 
-  // ── Mock GPS animation (runs when displayJob is set) ───────────────────
+  // ── Real driver position from Firestore ────────────────────────────────
   useEffect(() => {
-    if (!displayJob) return;
+    if (!firestoreJob?.driverLat || !firestoreJob?.driverLng) return;
+    setDriverLat(firestoreJob.driverLat);
+    setDriverLng(firestoreJob.driverLng);
+  }, [firestoreJob?.driverLat, firestoreJob?.driverLng]);
+
+  const useLiveTracking = isFirebaseConfigured() && Boolean(jobId);
+
+  // ── Mock GPS animation (demo / offline path only) ─────────────────────
+  useEffect(() => {
+    if (!displayJob || useLiveTracking) return;
     tick.current = 0;
     setDriverLat(displayJob.driverLat);
     setDriverLng(displayJob.driverLng);
@@ -156,7 +166,22 @@ export function LiveTrackingScreen() {
     }, MOCK_TICK_MS);
 
     return () => clearInterval(id);
-  }, [displayJob, insets.top]);
+  }, [displayJob, insets.top, useLiveTracking]);
+
+  // ── Fit map when live driver position updates ──────────────────────────
+  useEffect(() => {
+    if (!useLiveTracking || !displayJob) return;
+    mapRef.current?.fitToCoordinates(
+      [
+        { latitude: driverLat, longitude: driverLng },
+        { latitude: displayJob.pickupLat, longitude: displayJob.pickupLng },
+      ],
+      {
+        edgePadding: { top: insets.top + 100, right: 44, bottom: 260, left: 44 },
+        animated: true,
+      },
+    );
+  }, [useLiveTracking, displayJob, driverLat, driverLng, insets.top]);
 
   const startTrackingDemo = () => {
     beginActiveJob(
@@ -192,7 +217,7 @@ export function LiveTrackingScreen() {
 
   const markComplete = () => {
     if (isFirebaseConfigured() && jobId) {
-      void updateJobStatus(jobId, "completed");
+      void callUpdateJobStatus(jobId, "completed");
       // Firestore subscription handles navigation
     } else {
       completeActiveJob({
@@ -217,11 +242,12 @@ export function LiveTrackingScreen() {
   };
 
   const routeLine = [
-    { latitude: displayJob.driverLat, longitude: displayJob.driverLng },
+    { latitude: driverLat, longitude: driverLng },
     { latitude: displayJob.pickupLat, longitude: displayJob.pickupLng },
   ];
-  const routeSoFar =
-    progressT >= 1
+  const routeSoFar = useLiveTracking
+    ? routeLine
+    : progressT >= 1
       ? routeLine
       : [
           { latitude: displayJob.driverLat, longitude: displayJob.driverLng },
@@ -279,7 +305,11 @@ export function LiveTrackingScreen() {
       ? "Please check and confirm the photos below"
       : firestoreStatus === "arrived"
         ? "Arrived at your location"
-        : `ETA ~${eta} min`;
+        : useLiveTracking
+          ? firestoreStatus === "en_route"
+            ? "Driver en route — live location"
+            : "Tracking driver"
+          : `ETA ~${eta} min`;
 
   return (
     <View style={styles.flex}>

@@ -17,10 +17,15 @@ import type { VerificationStatus } from "../../types";
 import { colors, radii, space } from "../../theme/tokens";
 import { isFirebaseConfigured } from "../../firebase/config";
 import {
+  countCompleted,
+  sumCompletedToday,
+} from "../../firebase/jobMappers";
+import {
   subscribeToOpenJobs,
-  acceptJob,
+  subscribeToDriverCompletedJobs,
   type JobDoc,
 } from "../../firebase/jobService";
+import { callAcceptJob } from "../../firebase/functionsService";
 
 const MOCK_OFFERS = [
   {
@@ -114,8 +119,10 @@ export function OperatorHomeScreen() {
   const [available, setAvailable] = useState(false);
   const [openJobs, setOpenJobs] = useState<JobDoc[]>([]);
   const [accepting, setAccepting] = useState<string | null>(null);
+  const [completedJobs, setCompletedJobs] = useState<JobDoc[]>([]);
 
   const firstName = user?.firstName?.trim() ?? "Partner";
+  const useLiveData = isFirebaseConfigured() && Boolean(user);
 
   // ── Subscribe to open jobs when driver goes available (approved only) ──
   useEffect(() => {
@@ -129,13 +136,24 @@ export function OperatorHomeScreen() {
       unsub();
       setOpenJobs([]);
     };
-  }, [available]);
+  }, [available, isApproved]);
+
+  // ── Live stats from completed jobs ──
+  useEffect(() => {
+    if (!useLiveData || !user || !isApproved) return;
+    return subscribeToDriverCompletedJobs(user.id, setCompletedJobs);
+  }, [useLiveData, user, isApproved]);
+
+  const todayEarnings = useLiveData ? sumCompletedToday(completedJobs) : 0;
+  const completedCount = useLiveData ? countCompleted(completedJobs) : 0;
 
   const handleAccept = async (job: JobDoc) => {
     if (!user) return;
     setAccepting(job.id);
     try {
-      await acceptJob(job.id, user.id, user.firstName);
+      if (isFirebaseConfigured()) {
+        await callAcceptJob(job.id);
+      }
       navigation.navigate("OperatorLiveJob", { jobId: job.id });
     } catch {
       setAccepting(null);
@@ -244,8 +262,11 @@ export function OperatorHomeScreen() {
       </Pressable>
 
       <View style={styles.statsRow}>
-        <StatChip label="Today est." value={available ? "£0.00" : "—"} />
-        <StatChip label="Completed" value="0" />
+        <StatChip
+          label="Today est."
+          value={available ? `£${todayEarnings.toFixed(2)}` : "—"}
+        />
+        <StatChip label="Completed" value={String(completedCount)} />
         <StatChip label="Session" value={available ? "Active" : "—"} />
       </View>
 

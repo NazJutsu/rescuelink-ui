@@ -3,13 +3,13 @@ import {
   collection,
   doc,
   onSnapshot,
-  orderBy,
   query,
   updateDoc,
   where,
   type Unsubscribe,
 } from "firebase/firestore";
 import { getFirebaseDb } from "./config";
+import { sortJobsNewestFirst } from "./jobMappers";
 import type { JobStatus } from "../types";
 
 export type JobDoc = {
@@ -25,6 +25,7 @@ export type JobDoc = {
   dropoffLabel?: string;
   status: JobStatus;
   createdAt: string;
+  completedAt?: string;
   totalGbp: number;
   /** Set when a driver accepts */
   driverId?: string;
@@ -97,7 +98,11 @@ export async function updateJobStatus(
   jobId: string,
   status: JobStatus,
 ): Promise<void> {
-  await updateDoc(doc(getFirebaseDb(), "jobs", jobId), { status });
+  const patch: Record<string, unknown> = { status };
+  if (status === "completed") {
+    patch.completedAt = new Date().toISOString();
+  }
+  await updateDoc(doc(getFirebaseDb(), "jobs", jobId), patch);
 }
 
 /**
@@ -148,11 +153,12 @@ export function subscribeToCustomerJobs(
   const q = query(
     collection(getFirebaseDb(), "jobs"),
     where("customerId", "==", customerId),
-    where("status", "in", ["completed", "cancelled"]),
-    orderBy("createdAt", "desc"),
   );
   return onSnapshot(q, (snap) => {
-    callback(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<JobDoc, "id">) })));
+    const jobs = snap.docs
+      .map((d) => ({ id: d.id, ...(d.data() as Omit<JobDoc, "id">) }))
+      .filter((j) => j.status === "completed" || j.status === "cancelled");
+    callback(sortJobsNewestFirst(jobs));
   });
 }
 
@@ -166,11 +172,12 @@ export function subscribeToDriverCompletedJobs(
   const q = query(
     collection(getFirebaseDb(), "jobs"),
     where("driverId", "==", driverId),
-    where("status", "in", ["completed", "cancelled"]),
-    orderBy("createdAt", "desc"),
   );
   return onSnapshot(q, (snap) => {
-    callback(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<JobDoc, "id">) })));
+    const jobs = snap.docs
+      .map((d) => ({ id: d.id, ...(d.data() as Omit<JobDoc, "id">) }))
+      .filter((j) => j.status === "completed" || j.status === "cancelled");
+    callback(sortJobsNewestFirst(jobs));
   });
 }
 
@@ -185,12 +192,16 @@ export function subscribeToDriverActiveJob(
   const q = query(
     collection(getFirebaseDb(), "jobs"),
     where("driverId", "==", driverId),
-    where("status", "in", ["en_route", "arrived", "inspection_pending"]),
   );
   return onSnapshot(q, (snap) => {
-    if (snap.empty) { callback(null); return; }
-    const d = snap.docs[0];
-    callback({ id: d.id, ...(d.data() as Omit<JobDoc, "id">) });
+    const active = snap.docs
+      .map((d) => ({ id: d.id, ...(d.data() as Omit<JobDoc, "id">) }))
+      .find((j) =>
+        j.status === "en_route" ||
+        j.status === "arrived" ||
+        j.status === "inspection_pending",
+      );
+    callback(active ?? null);
   });
 }
 

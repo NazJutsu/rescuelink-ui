@@ -2,23 +2,54 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isJobCustomer() {
+      return isSignedIn() && resource.data.customerId == request.auth.uid;
+    }
+
+    function isJobDriver() {
+      return isSignedIn() && resource.data.driverId == request.auth.uid;
+    }
+
+    function isAcceptingDriver() {
+      return isSignedIn()
+        && resource.data.driverId == null
+        && request.resource.data.driverId == request.auth.uid
+        && request.resource.data.status == "en_route";
+    }
+
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if isOwner(userId);
     }
 
     match /operators/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if isOwner(userId);
     }
 
     match /jobs/{jobId} {
-      allow create: if request.auth != null;
-      allow read:   if request.auth != null;
-      allow update: if request.auth != null && (
+      allow create: if isSignedIn()
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.status == "requested";
+
+      allow read: if isSignedIn() && (
         resource.data.customerId == request.auth.uid ||
-        resource.data.driverId   == request.auth.uid ||
-        (resource.data.driverId == null &&
-         request.resource.data.driverId == request.auth.uid)
+        resource.data.driverId == request.auth.uid ||
+        resource.data.status == "requested"
       );
+
+      allow update: if isSignedIn() && (
+        isJobCustomer() ||
+        isJobDriver() ||
+        isAcceptingDriver()
+      );
+
       allow delete: if false;
     }
   }
