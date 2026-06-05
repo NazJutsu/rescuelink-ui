@@ -16,6 +16,7 @@ import { useApp } from "../../state/AppContext";
 import { colors, radii, space } from "../../theme/tokens";
 import { isFirebaseConfigured } from "../../firebase/config";
 import { authErrorMessage } from "../../firebase/authErrors";
+import { firebaseResetPassword } from "../../firebase/authService";
 import type { CombinedStackParamList } from "../../navigation/types";
 
 type Props = NativeStackScreenProps<CombinedStackParamList, "Login">;
@@ -29,7 +30,29 @@ export function LoginScreen({ navigation }: Props) {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleForgotPassword = async () => {
+    setError(null);
+    if (!email.trim()) {
+      setError("Enter your email address above, then tap Forgot password.");
+      return;
+    }
+    setResetLoading(true);
+    try {
+      if (firebaseActive) {
+        await firebaseResetPassword(email);
+      }
+      setResetSent(true);
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code ?? "";
+      setError(authErrorMessage(code));
+    } finally {
+      setResetLoading(false);
+    }
+  };
 
   const handleSignIn = async () => {
     setError(null);
@@ -112,6 +135,28 @@ export function LoginScreen({ navigation }: Props) {
             />
           </Pressable>
         </View>
+
+        {/* Forgot password */}
+        <Pressable
+          onPress={handleForgotPassword}
+          disabled={resetLoading}
+          style={styles.forgotRow}
+          hitSlop={8}
+        >
+          <Text style={styles.forgotText}>
+            {resetLoading ? "Sending…" : "Forgot password?"}
+          </Text>
+        </Pressable>
+
+        {/* Reset email sent confirmation */}
+        {resetSent ? (
+          <View style={styles.resetBanner}>
+            <Ionicons name="checkmark-circle" size={16} color={colors.green} />
+            <Text style={styles.resetBannerText}>
+              Reset link sent to {email.trim()}. Check your inbox.
+            </Text>
+          </View>
+        ) : null}
 
         {error ? (
           <View style={styles.errorBox}>
@@ -215,6 +260,22 @@ const styles = StyleSheet.create({
     right: space.md,
     bottom: space.md + space.sm + 2,
   },
+
+  // ── Forgot password ──
+  forgotRow: { alignSelf: "flex-end", marginBottom: space.md, marginTop: -space.xs },
+  forgotText: { color: colors.orange, fontSize: 13, fontWeight: "600" },
+  resetBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "rgba(34,197,94,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(34,197,94,0.30)",
+    borderRadius: radii.md,
+    padding: space.md,
+    marginBottom: space.md,
+  },
+  resetBannerText: { flex: 1, color: colors.green, fontSize: 13, lineHeight: 18 },
 
   // ── Error ──
   errorBox: {

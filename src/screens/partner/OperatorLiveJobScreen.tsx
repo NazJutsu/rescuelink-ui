@@ -74,20 +74,28 @@ export function OperatorLiveJobScreen() {
   }
 
   const statusColor =
-    job.status === "arrived"
+    job.status === "arrived" && job.inspectionConfirmedAt
       ? colors.green
-      : job.status === "en_route"
+      : job.status === "arrived"
         ? colors.orange
-        : colors.textMuted;
+        : job.status === "inspection_pending"
+          ? colors.orange
+          : job.status === "en_route"
+            ? colors.orange
+            : colors.textMuted;
 
   const statusLabel =
     job.status === "en_route"
       ? "En route to pickup"
       : job.status === "arrived"
-        ? "Arrived at pickup"
-        : job.status === "completed"
-          ? "Job complete"
-          : job.status;
+        ? job.inspectionConfirmedAt
+          ? "Customer confirmed ✓ — safe to load"
+          : "Arrived at pickup"
+        : job.status === "inspection_pending"
+          ? "Waiting for customer confirmation…"
+          : job.status === "completed"
+            ? "Job complete"
+            : job.status;
 
   return (
     <ScrollView
@@ -139,9 +147,29 @@ export function OperatorLiveJobScreen() {
         />
       ) : null}
 
-      {job.status === "arrived" ? (
+      {/* Arrived, no inspection yet — take photos */}
+      {job.status === "arrived" && !job.inspectionConfirmedAt ? (
         <RLButton
-          label="Complete job"
+          label="Take inspection photos →"
+          onPress={() => navigation.navigate("DriverInspection", { jobId })}
+          style={styles.btn}
+        />
+      ) : null}
+
+      {/* Waiting for customer to confirm inspection */}
+      {job.status === "inspection_pending" ? (
+        <View style={styles.waitingBanner}>
+          <Ionicons name="hourglass-outline" size={18} color={colors.orange} />
+          <Text style={styles.waitingText}>
+            Photos sent — waiting for customer to confirm vehicle condition…
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Customer confirmed — driver can complete the job */}
+      {job.status === "arrived" && job.inspectionConfirmedAt ? (
+        <RLButton
+          label="Vehicle loaded — complete job"
           onPress={() =>
             Alert.alert(
               "Complete job",
@@ -236,6 +264,23 @@ const styles = StyleSheet.create({
   detailValue: { color: colors.white, fontWeight: "700", marginTop: 2 },
   detailValueHighlight: { color: colors.orange, fontSize: 16 },
   btn: { marginBottom: space.sm },
+  waitingBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: space.sm,
+    backgroundColor: colors.orangeFaint,
+    borderWidth: 1,
+    borderColor: colors.borderOrange,
+    borderRadius: radii.md,
+    padding: space.md,
+    marginBottom: space.md,
+  },
+  waitingText: {
+    flex: 1,
+    color: colors.textMuted,
+    fontSize: 13,
+    lineHeight: 19,
+  },
   cancelRow: { alignItems: "center", paddingVertical: space.md },
   cancelTxt: { color: colors.red, fontWeight: "700" },
   // Fallback styles

@@ -3,6 +3,7 @@ import {
   collection,
   doc,
   onSnapshot,
+  orderBy,
   query,
   updateDoc,
   where,
@@ -31,6 +32,12 @@ export type JobDoc = {
   /** Updated by driver during active job (Phase 2) */
   driverLat?: number;
   driverLng?: number;
+  /** Pre-load vehicle inspection */
+  inspectionPhotos?: string[];
+  inspectionNotes?: string;
+  inspectionSentAt?: string;
+  inspectionConfirmedAt?: string;
+  inspectionDisputed?: boolean;
 };
 
 type CreateJobInput = Omit<
@@ -91,6 +98,100 @@ export async function updateJobStatus(
   status: JobStatus,
 ): Promise<void> {
   await updateDoc(doc(getFirebaseDb(), "jobs", jobId), { status });
+}
+
+/**
+ * Driver submits inspection photos — sets status to "inspection_pending"
+ * so the customer sees them on the Live Tracking screen.
+ */
+export async function saveInspectionPhotos(
+  jobId: string,
+  photoUrls: string[],
+  notes: string,
+): Promise<void> {
+  await updateDoc(doc(getFirebaseDb(), "jobs", jobId), {
+    inspectionPhotos: photoUrls,
+    inspectionNotes: notes,
+    inspectionSentAt: new Date().toISOString(),
+    status: "inspection_pending" as JobStatus,
+  });
+}
+
+/**
+ * Customer confirms the pre-load inspection — sets inspectionConfirmedAt
+ * and moves status back to "arrived" so the driver can proceed.
+ */
+export async function confirmInspection(jobId: string): Promise<void> {
+  await updateDoc(doc(getFirebaseDb(), "jobs", jobId), {
+    inspectionConfirmedAt: new Date().toISOString(),
+    status: "arrived" as JobStatus,
+  });
+}
+
+/**
+ * Customer disputes the pre-load inspection — flags the job and cancels.
+ */
+export async function disputeInspection(jobId: string): Promise<void> {
+  await updateDoc(doc(getFirebaseDb(), "jobs", jobId), {
+    inspectionDisputed: true,
+    status: "cancelled" as JobStatus,
+  });
+}
+
+/**
+ * Subscribes to a customer's completed/cancelled job history, newest first.
+ */
+export function subscribeToCustomerJobs(
+  customerId: string,
+  callback: (jobs: JobDoc[]) => void,
+): Unsubscribe {
+  const q = query(
+    collection(getFirebaseDb(), "jobs"),
+    where("customerId", "==", customerId),
+    where("status", "in", ["completed", "cancelled"]),
+    orderBy("createdAt", "desc"),
+  );
+  return onSnapshot(q, (snap) => {
+    callback(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<JobDoc, "id">) })));
+  });
+}
+
+/**
+ * Subscribes to a driver's completed/cancelled job history, newest first.
+ */
+export function subscribeToDriverCompletedJobs(
+  driverId: string,
+  callback: (jobs: JobDoc[]) => void,
+): Unsubscribe {
+  const q = query(
+    collection(getFirebaseDb(), "jobs"),
+    where("driverId", "==", driverId),
+    where("status", "in", ["completed", "cancelled"]),
+    orderBy("createdAt", "desc"),
+  );
+  return onSnapshot(q, (snap) => {
+    callback(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<JobDoc, "id">) })));
+  });
+}
+
+/**
+ * Subscribes to a driver's currently active job (en_route / arrived / inspection_pending).
+ * Returns null if no active job exists.
+ */
+export function subscribeToDriverActiveJob(
+  driverId: string,
+  callback: (job: JobDoc | null) => void,
+): Unsubscribe {
+  const q = query(
+    collection(getFirebaseDb(), "jobs"),
+    where("driverId", "==", driverId),
+    where("status", "in", ["en_route", "arrived", "inspection_pending"]),
+  );
+  return onSnapshot(q, (snap) => {
+    if (snap.empty) { callback(null); return; }
+    const d = snap.docs[0];
+    callback({ id: d.id, ...(d.data() as Omit<JobDoc, "id">) });
+  });
 }
 
 /** Driver broadcasts their live location onto the active job doc (Phase 2 hook). */

@@ -36,6 +36,7 @@ export type CombinedStackParamList = {
   OperatorRejected: undefined;
   OperatorTabs: undefined;
   OperatorLiveJob: { jobId?: string } | undefined;
+  DriverInspection: { jobId?: string } | undefined;
 };
 
 export type RootStackParamList = CombinedStackParamList;

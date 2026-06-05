@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Image,
   Linking,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -12,13 +14,14 @@ import MapView, { Marker, Polyline } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { RLButton } from "../../components/ui";
 import { buildMockActiveJob } from "../../data/activeJob";
 import { useApp } from "../../state/AppContext";
 import type { CombinedStackParamList } from "../../navigation/types";
 import { colors, radii, space } from "../../theme/tokens";
 import { isFirebaseConfigured } from "../../firebase/config";
-import { subscribeToJob, updateJobStatus } from "../../firebase/jobService";
+import { subscribeToJob, updateJobStatus, confirmInspection, disputeInspection } from "../../firebase/jobService";
 import type { JobDoc } from "../../firebase/jobService";
 import type { ActiveJob } from "../../types";
 
@@ -225,18 +228,58 @@ export function LiveTrackingScreen() {
           { latitude: driverLat, longitude: driverLng },
         ];
 
+  const [inspConfirming, setInspConfirming] = useState(false);
+
+  const handleConfirmInspection = async () => {
+    if (!jobId) return;
+    setInspConfirming(true);
+    try {
+      await confirmInspection(jobId);
+    } catch {
+      Alert.alert("Error", "Could not confirm. Please try again.");
+    } finally {
+      setInspConfirming(false);
+    }
+  };
+
+  const handleDisputeInspection = () => {
+    Alert.alert(
+      "Dispute condition",
+      "Are you sure? The driver will be notified and the job will be cancelled for review.",
+      [
+        { text: "Back", style: "cancel" },
+        {
+          text: "Dispute",
+          style: "destructive",
+          onPress: async () => {
+            if (!jobId) return;
+            try {
+              await disputeInspection(jobId);
+            } catch {
+              Alert.alert("Error", "Could not raise dispute. Please try again.");
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const firestoreStatus = firestoreJob?.status;
   const statusTitle =
-    firestoreStatus === "arrived"
-      ? "Operator has arrived"
-      : firestoreStatus === "en_route" || progressT < 0.96
-        ? "Operator en route"
-        : "Almost at pickup point";
+    firestoreStatus === "inspection_pending"
+      ? "Review vehicle condition"
+      : firestoreStatus === "arrived"
+        ? "Operator has arrived"
+        : firestoreStatus === "en_route" || progressT < 0.96
+          ? "Operator en route"
+          : "Almost at pickup point";
 
   const etaLabel =
-    firestoreStatus === "arrived"
-      ? "Arrived at your location"
-      : `ETA ~${eta} min`;
+    firestoreStatus === "inspection_pending"
+      ? "Please check and confirm the photos below"
+      : firestoreStatus === "arrived"
+        ? "Arrived at your location"
+        : `ETA ~${eta} min`;
 
   return (
     <View style={styles.flex}>
@@ -270,42 +313,93 @@ export function LiveTrackingScreen() {
         <Text style={styles.bannerEta}>{etaLabel}</Text>
       </View>
 
-      <View style={[styles.sheet, { paddingBottom: insets.bottom + space.lg }]}>
-        <Text style={styles.driverName}>{displayJob.operatorName}</Text>
-        <Text style={styles.rating}>
-          ★ {displayJob.operatorRating.toFixed(1)} · RescueLink Pro
-        </Text>
-        <Text style={styles.meta}>{displayJob.vehicleLabel}</Text>
-        <Text style={styles.issue}>{displayJob.issueLabel}</Text>
+      <ScrollView
+        style={[styles.sheet, { maxHeight: firestoreStatus === "inspection_pending" ? "55%" : undefined }]}
+        contentContainerStyle={{ paddingBottom: insets.bottom + space.lg }}
+      >
+        {/* ── Inspection panel (visible when driver sends photos) ── */}
+        {firestoreStatus === "inspection_pending" && firestoreJob?.inspectionPhotos?.length ? (
+          <View style={styles.inspectionPanel}>
+            <View style={styles.inspectionHeader}>
+              <Ionicons name="camera-outline" size={18} color={colors.orange} />
+              <Text style={styles.inspectionTitle}>Pre-load vehicle photos</Text>
+            </View>
+            <Text style={styles.inspectionSubtitle}>
+              Your driver has photographed your vehicle. Please check each photo and confirm
+              there is no pre-existing damage before they load it.
+            </Text>
 
-        <View style={styles.actions}>
-          <Pressable
-            style={styles.iconBtn}
-            onPress={() => Linking.openURL("tel:+447700900321")}
-          >
-            <Text style={styles.iconBtnText}>Call</Text>
-          </Pressable>
-          <Pressable
-            style={styles.iconBtn}
-            onPress={() => Alert.alert("Messages", "In-app chat coming soon.")}
-          >
-            <Text style={styles.iconBtnText}>Message</Text>
-          </Pressable>
-        </View>
+            {/* 2×2 photo grid */}
+            <View style={styles.inspPhotosGrid}>
+              {firestoreJob.inspectionPhotos.map((uri, i) => (
+                <Image
+                  key={i}
+                  source={{ uri }}
+                  style={styles.inspPhoto}
+                  resizeMode="cover"
+                />
+              ))}
+            </View>
 
-        <RLButton
-          label="Mark job complete"
-          onPress={markComplete}
-          style={{ marginTop: space.md }}
-        />
-        <Pressable
-          onPress={() =>
-            Alert.alert("Cancel job", "Cancellation policy will be shown here.")
-          }
-        >
-          <Text style={styles.cancel}>Cancel job</Text>
-        </Pressable>
-      </View>
+            {firestoreJob.inspectionNotes ? (
+              <View style={styles.inspNotes}>
+                <Text style={styles.inspNotesLabel}>DRIVER NOTES</Text>
+                <Text style={styles.inspNotesText}>{firestoreJob.inspectionNotes}</Text>
+              </View>
+            ) : null}
+
+            <RLButton
+              label="Confirm — no damage ✓"
+              onPress={handleConfirmInspection}
+              loading={inspConfirming}
+              style={styles.confirmBtn}
+            />
+            <Pressable onPress={handleDisputeInspection} style={styles.disputeRow}>
+              <Text style={styles.disputeText}>Dispute condition</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {/* Normal sheet content (hidden during inspection review) */}
+        {firestoreStatus !== "inspection_pending" ? (
+          <>
+            <Text style={styles.driverName}>{displayJob.operatorName}</Text>
+            <Text style={styles.rating}>
+              ★ {displayJob.operatorRating.toFixed(1)} · RescueLink Pro
+            </Text>
+            <Text style={styles.meta}>{displayJob.vehicleLabel}</Text>
+            <Text style={styles.issue}>{displayJob.issueLabel}</Text>
+
+            <View style={styles.actions}>
+              <Pressable
+                style={styles.iconBtn}
+                onPress={() => Linking.openURL("tel:+447700900321")}
+              >
+                <Text style={styles.iconBtnText}>Call</Text>
+              </Pressable>
+              <Pressable
+                style={styles.iconBtn}
+                onPress={() => Alert.alert("Messages", "In-app chat coming soon.")}
+              >
+                <Text style={styles.iconBtnText}>Message</Text>
+              </Pressable>
+            </View>
+
+            <RLButton
+              label="Mark job complete"
+              onPress={markComplete}
+              style={{ marginTop: space.md }}
+            />
+            <Pressable
+              onPress={() =>
+                Alert.alert("Cancel job", "Cancellation policy will be shown here.")
+              }
+            >
+              <Text style={styles.cancel}>Cancel job</Text>
+            </Pressable>
+          </>
+        ) : null}
+      </ScrollView>
     </View>
   );
 }
@@ -354,6 +448,60 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: space.lg,
   },
+  // ── Inspection panel ──
+  inspectionPanel: {
+    marginBottom: space.md,
+  },
+  inspectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    marginBottom: space.xs,
+  },
+  inspectionTitle: {
+    color: colors.white,
+    fontWeight: "800",
+    fontSize: 16,
+  },
+  inspectionSubtitle: {
+    color: colors.textMuted,
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: space.md,
+  },
+  inspPhotosGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: space.xs,
+    marginBottom: space.md,
+  },
+  inspPhoto: {
+    width: "48%",
+    aspectRatio: 1,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surface2,
+  },
+  inspNotes: {
+    backgroundColor: colors.surface2,
+    borderRadius: radii.sm,
+    padding: space.md,
+    marginBottom: space.md,
+  },
+  inspNotesLabel: {
+    color: colors.textFaint,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  inspNotesText: {
+    color: colors.text,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  confirmBtn: { marginBottom: space.sm },
+  disputeRow: { alignItems: "center", paddingVertical: space.sm },
+  disputeText: { color: colors.red, fontWeight: "700" },
   empty: {
     flex: 1,
     backgroundColor: colors.bg,

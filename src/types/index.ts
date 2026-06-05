@@ -36,6 +36,7 @@ export type JobStatus =
   | "matching"
   | "en_route"
   | "arrived"
+  | "inspection_pending"
   | "completed"
   | "cancelled";
 

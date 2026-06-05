@@ -2,6 +2,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
+  sendPasswordResetEmail,
   onAuthStateChanged,
   type User as FirebaseUser,
 } from "firebase/auth";
@@ -33,6 +34,10 @@ export async function firebaseSignUp(
 
 export async function firebaseSignOut(): Promise<void> {
   await signOut(getFirebaseAuth());
+}
+
+export async function firebaseResetPassword(email: string): Promise<void> {
+  await sendPasswordResetEmail(getFirebaseAuth(), email.trim().toLowerCase());
 }
 
 /** Subscribes to Firebase auth state changes. Returns the unsubscribe function. */

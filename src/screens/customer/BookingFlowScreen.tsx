@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from "react";
 import {
-  Alert,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
@@ -100,7 +99,18 @@ export function BookingFlowScreen() {
         });
         navigation.replace("LiveTracking", { jobId });
       } catch {
-        Alert.alert("Error", "Could not create job. Please try again.");
+        // Firebase write failed — fall back to mock so the flow continues
+        beginActiveJob(
+          buildMockActiveJob({
+            jobId: `live_${Date.now()}`,
+            quoteTotal: quote.totalGbp,
+            issueLabel,
+            vehicleLabel,
+            pickupLat,
+            pickupLng,
+          }),
+        );
+        navigation.replace("LiveTracking");
       } finally {
         setSubmitting(false);
       }

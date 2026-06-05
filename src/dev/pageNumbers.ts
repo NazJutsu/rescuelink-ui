@@ -24,4 +24,5 @@ export const DEV_PAGES = {
   operatorEarnings: { id: "P25", label: "Driver earnings" },
   operatorMore: { id: "P26", label: "Driver more" },
   operatorLiveJob: { id: "P27", label: "Driver live job" },
+  driverInspection: { id: "P28", label: "Driver inspection" },
 } as const satisfies Record<string, DevPageRef>;

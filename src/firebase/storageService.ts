@@ -23,6 +23,55 @@ export async function pickDocument(): Promise<ImagePicker.ImagePickerAsset | nul
 }
 
 /**
+ * Opens the camera to take a photo. Falls back to library if camera is unavailable.
+ * Returns the asset or null if cancelled.
+ */
+export async function takePhoto(): Promise<ImagePicker.ImagePickerAsset | null> {
+  const camPerm = await ImagePicker.requestCameraPermissionsAsync();
+  if (camPerm.status === "granted") {
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+      quality: 0.9,
+    });
+    if (!result.canceled && result.assets.length > 0) return result.assets[0];
+    return null;
+  }
+  // Camera not available — fall back to library
+  const libPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (libPerm.status !== "granted") return null;
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    allowsEditing: false,
+    quality: 0.9,
+  });
+  if (result.canceled || result.assets.length === 0) return null;
+  return result.assets[0];
+}
+
+/**
+ * Uploads a vehicle inspection photo to Firebase Storage.
+ * Returns the public download URL.
+ */
+export async function uploadInspectionPhoto(
+  jobId: string,
+  slotKey: string,
+  asset: ImagePicker.ImagePickerAsset,
+): Promise<string> {
+  const storage = getFirebaseStorage();
+  const ext = asset.uri.split(".").pop() ?? "jpg";
+  const mime = asset.mimeType ?? `image/${ext}`;
+  const storagePath = `jobs/${jobId}/inspection/${slotKey}.${ext}`;
+
+  const response = await fetch(asset.uri);
+  const blob = await response.blob();
+
+  const storageRef = ref(storage, storagePath);
+  await uploadBytes(storageRef, blob, { contentType: mime });
+  return getDownloadURL(storageRef);
+}
+
+/**
  * Uploads a picked asset to Firebase Storage and returns a MockUploadedFile
  * (compatible with the existing OperatorProfile type) containing the download URL.
  */

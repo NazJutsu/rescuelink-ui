@@ -29,6 +29,7 @@ import { OperatorJobsScreen } from "../screens/partner/OperatorJobsScreen";
 import { OperatorEarningsScreen } from "../screens/partner/OperatorEarningsScreen";
 import { OperatorAccountScreen } from "../screens/partner/OperatorAccountScreen";
 import { OperatorLiveJobScreen } from "../screens/partner/OperatorLiveJobScreen";
+import { DriverInspectionScreen } from "../screens/partner/DriverInspectionScreen";
 import { DEV_PAGES } from "../dev/pageNumbers";
 import { withDevPageBadge } from "../dev/withDevPageBadge";
 
@@ -53,6 +54,7 @@ const OperatorJobs = withDevPageBadge(OperatorJobsScreen, DEV_PAGES.operatorJobs
 const OperatorEarnings = withDevPageBadge(OperatorEarningsScreen, DEV_PAGES.operatorEarnings);
 const OperatorMore = withDevPageBadge(OperatorAccountScreen, DEV_PAGES.operatorMore);
 const OperatorLiveJob = withDevPageBadge(OperatorLiveJobScreen, DEV_PAGES.operatorLiveJob);
+const DriverInspection = withDevPageBadge(DriverInspectionScreen, DEV_PAGES.driverInspection);
 
 const CustomerTab = createBottomTabNavigator<CustomerTabParamList>();
 const OperatorTab = createBottomTabNavigator<OperatorTabParamList>();
@@ -193,6 +195,7 @@ function OperatorNavigator() {
     <OperatorStack.Navigator screenOptions={{ headerShown: false }}>
       <OperatorStack.Screen name="OperatorTabs" component={OperatorTabs} />
       <OperatorStack.Screen name="OperatorLiveJob" component={OperatorLiveJob} />
+      <OperatorStack.Screen name="DriverInspection" component={DriverInspection} />
       <OperatorStack.Screen name="OperatorOnboarding" component={OperatorOnboardingScreen} />
       <OperatorStack.Screen name="OperatorPending" component={OperatorPending} />
       <OperatorStack.Screen name="OperatorRejected" component={OperatorRejected} />
